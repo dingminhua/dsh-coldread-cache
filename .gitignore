@@ -1,0 +1,5 @@
+node_modules/
+.stage*/
+.*.log
+.fault*.log
+.dump-*.txt

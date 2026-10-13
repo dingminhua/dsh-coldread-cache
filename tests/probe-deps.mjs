@@ -1,0 +1,18 @@
+import z from "@deepseek-ai/schemastery";
+import * as sf from "@deepseek-ai/dsh-session-format";
+import * as cat from "@deepseek-ai/dsh-session-format-catalog";
+import * as v34 from "@deepseek-ai/dsh-session-format-v3-to-v4";
+import * as sp from "@deepseek-ai/dsh-session-persistence";
+import * as sj from "@deepseek-ai/dsh-session";
+import * as jl from "@deepseek-ai/dsh-session-persistence-jsonl";
+console.log("schemastery", typeof z.object);
+console.log("sessionFormatVersion", sj.SESSION_FORMAT_VERSION, "knownTypes", sj.KNOWN_SESSION_EVENT_TYPES?.size);
+console.log("catalog.currentVersion", cat.sessionFormatCatalog.currentVersion, "createRestore", typeof cat.sessionFormatCatalog.createRestore, "encodeCurrentEvent", typeof cat.sessionFormatCatalog.encodeCurrentEvent);
+console.log("v34.assertV4RowAdmission", typeof v34.assertV4RowAdmission, "assertReleasedV4Relationships", typeof v34.assertReleasedV4Relationships);
+console.log("sp.assertStoredId", typeof sp.assertStoredId, "validateStoredEvents", typeof sp.validateStoredEvents, "SessionPersistenceRevision", typeof sp.SessionPersistenceRevision);
+console.log("sp keystone", JSON.stringify(sp.SessionPersistenceRevision([1,2,345,4,5].join(":"))));
+console.log("sessionFormat.exports", Object.keys(sf).join(","));
+console.log("jsonl.exports", Object.keys(jl).join(","));
+const P = jl.default ?? jl.JsonlSessionPersistence;
+console.log("jsonl.default", typeof P, "name", P?.name);
+console.log("jsonl proto methods sample", Object.getOwnPropertyNames(P.prototype).filter((k) => !k.startsWith("_")).slice(0, 40).join(","));

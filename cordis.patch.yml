@@ -1,0 +1,10 @@
+# dsh-coldread-cache bundle patch
+#
+# 安装（推荐）：
+#   dsh plugin --profile <name> add <path-or-git>
+# 手工挂载：在 profile 的 cordis.patch.yml 里加同一条 insert 行。
+#
+# 行 id `coldread-cache` 同时是设置命名空间。
+- insert:
+    - id: coldread-cache
+      name: 'dsh-coldread-cache'
