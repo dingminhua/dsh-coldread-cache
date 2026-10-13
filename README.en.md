@@ -135,6 +135,74 @@ Mount order does not matter: the plugin first tries
 The first two are memory policy for the process. The backend's own two-entry memo
 is left exactly as it is.
 
+The budget is in **compressed source bytes**, but the bill is paid in **heap**: a
+parsed log measured about **8x** its compressed size (202 MB of sessions held about
+1207 MB of heap), so the default 128 MB budget is roughly 1 GB of heap.
+`resident.heapEstimateBytes` / `heapRatio` in the status file report that estimate
+live, sampled from real cold parses rather than hardcoded. Raise it on a machine
+with room to spare.
+
+**A smaller default was tried and reverted on evidence.** The intuition was "less
+budget, same behaviour, less memory", but measuring it on real sessions (one being
+written, four being read) said otherwise:
+
+| budget | resident | residency hit rate |
+| --- | --- | --- |
+| 16 MB | 35 MB | 14% |
+| 32 MB | 35 MB | 14% |
+| 64 MB | 35 MB | 14% |
+| 128 MB | 99 MB | **53%** |
+| 256 MB | 167 MB | **93%** |
+
+The path that actually removes the lag — serving an append's read from the resident
+parse instead of re-decoding the whole log — already works at 16 MB, because a
+written session outranks a read-only one. What the budget above that buys is
+residency for sessions a host merely READS: browsing history, the session list,
+switching between sessions. So 128 MB is the smallest budget that serves a real
+working set, and lowering it trades a measured regression for a memory saving that
+is not the bottleneck.
+
+### Why it got laggy after long use (fixed)
+
+The extension path **deep-froze the whole session's event graph on every turn**:
+`Object.freeze` has to walk every nested object. Freezing itself is correct (it
+matches what the pristine backend does), but extension applied it to **all** events
+rather than only the newly appended ones, so each turn re-walked the entire session
+— a cost that grows linearly with the session. Measured on a 60k-event log:
+
+| work done per extension | cost |
+| --- | --- |
+| freezing every event in the result (before) | **191.7 / 199.5 ms** (two runs) |
+| freezing only the appended events (after) | **0.4 / 1.8 ms** (two runs) |
+| the `concat` itself (unavoidable) | 0.3 ms |
+
+A 100-turn session would have spent roughly **20 seconds** just re-freezing. That is
+a real source of "it gets slower the longer you use it", and it was introduced by
+this plugin. The fix has two parts, each a safety net for the other: (1) extension
+freezes only the new events; (2) `freezeStoredEvent` returns immediately when the
+root is **already frozen**, since a frozen root means the whole graph is frozen (the
+walk always freezes a graph in one pass). Part 2 means part 1 cannot silently
+regress into a slow path. The gate asserts that every event in a real extended
+result is deeply frozen, and proves that assertion can report a violation using an
+deliberately open object.
+
+After the fix, the A/B median is **131 ms** (about 500 ms before).
+
+### Eviction order
+
+When residency is full, does the least recently READ session go first? No — that
+fails on a real host. Reading a bystander session IS a cold parse, and a cold parse
+makes that bystander the most recently used entry, so the session being WRITTEN gets
+pushed out — and "read right after an append" is the one case this plugin exists
+for. Measured: a host running for 85 minutes, 405 reads served from residency, and
+**zero** extensions, every fallback classified `no-entry`.
+
+The rule is therefore: **a session that has been written outranks one that has only
+been read.** Among equals the least recently read goes first, and the last entry is
+never evicted. The gate carries a regression assertion for this and proves it can
+turn red by fault injection (neutralize the write ranking and the same assertion
+must fail). `resident.hot` is how many sessions are currently ranked as written.
+
 `statusFile` exists for diagnosis: it writes a live document (refreshed by a
 heartbeat) saying **which hooks this process actually installed**, how many hits
 it served, and the distribution of fallback reasons. A plugin that silently stops
@@ -143,20 +211,31 @@ working is worse than one that never worked, so there is a way to see it.
 ## Verified
 
 ```sh
-pnpm run gate    # acceptance gate over the real vendored backend
-pnpm run fault   # fault injection: prove the gate above can turn red
-pnpm run perf    # append-then-read A/B on a real session log
-pnpm test        # dependency and install-mechanism probes
+pnpm run gate          # acceptance gate over the real vendored backend
+pnpm run fault         # fault injection: prove the gate above can turn red
+pnpm run perf          # append-then-read A/B on a real session log
+pnpm test              # dependency and install-mechanism probes
+
+pnpm run probe:freeze  # per-turn full freeze vs freezing only new events (asserted)
+pnpm run probe:evict   # does residency survive bystander traffic (asserted)
+pnpm run probe:budget  # residency hit rate per budget (this is how the default was chosen)
+pnpm run probe:heap    # residency heap cost (source bytes -> heap)
 ```
+
+The `probe:*` scripts are what produced the numbers in this README, and they are
+not decoration: `probe:freeze` and `probe:evict` carry assertions and exit 1 when the
+behaviour regresses. They need real sessions: `$DSH_HOME\sessions` by default, or point
+`DSH_SESSIONS` straight at a sessions directory.
 
 ### The gate
 
-`GATE_GREEN checks=85 failures=0`. The gate drives the **real vendored backend**
-twice over the same private copies of real session logs — once pristine, once
-patched — and deep-compares the results: the corpus, the append path, torn
-artifacts, same-size rewrites, restore to pristine, a residency-free control, and
-a **deliberate fault injection that proves the comparison can fail**. A green
-without a fault injection is not green.
+`GATE_GREEN checks=95 failures=0` (about 4 minutes). The gate drives the **real
+vendored backend** twice over the same private copies of real session logs — once
+pristine, once patched — and deep-compares the results: the corpus, the append path,
+torn artifacts, same-size rewrites, restore to pristine, a residency-free control,
+**residency survival under bystander traffic**, and a **deliberate fault injection
+that proves the comparison can fail**. A green without a fault injection is not
+green.
 
 `pnpm run fault` runs seven injections on their own, proving the gate's
 decisive assertions can really fail: one flipped byte breaks the vendored digest
@@ -190,6 +269,18 @@ proof: the same loop, the same backend class, the same file, with residency
 disabled — it shows no speedup at all, which means the assertion **can really turn
 red**.
 
+After the freeze fix below, two more runs on the same fixture measured:
+
+| append-then-read | run A | run B |
+| --- | --- | --- |
+| pristine backend | 8 417 ms | 2 893 ms |
+| residency-free control | 6 959 ms | 4 682 ms |
+| **plugin** | **131 ms** | **88 ms** |
+
+That is **22× to 64×** against pristine. The absolute numbers move with the machine's
+load — pristine itself varied by 3x between those two runs — so the ratio is the
+claim, and the control is what keeps it honest.
+
 > Note: this does **not** compare "reading the same file twice". The backend's own
 > two-entry memo already makes a repeat read fast, so that comparison would prove
 > nothing. What actually hurts is **reading a log that just grew**, which is what
@@ -220,6 +311,23 @@ hits=11  ext=2  cold=4     <- another round: two more extensions
 
 The last two lines are the point: `extensions` climbs while `coldParses` does
 not follow it.
+
+### A defect found on a real host (fixed)
+
+That run was **short and revisited the same session**, which hid a problem that only
+appears over long use. On a host that had been running for 85 minutes of real work,
+the status file said:
+
+```json
+"stats": { "hits": 405, "extensions": 0, "coldParses": 369,
+           "fallbacks": 369, "reasons": { "no-entry": 369 } }
+```
+
+**405 reads served from residency, zero extensions, and all 369 fallbacks classified
+`no-entry`** — so the one case the plugin exists for never once succeeded in real
+use. The cause is the eviction order described above. This was found by reading the
+live counters, not by a test; the fix is what the "Eviction order" section and its
+regression assertion are about.
 
 ## Limitations
 

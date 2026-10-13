@@ -143,8 +143,11 @@ export async function listSessions() {
  * tens-of-megabyte fixtures there. Two concurrent runs do not merely race, they
  * corrupt each other — measured twice (a perf run lost its staged copy mid-loop
  * with ENOENT, and a gate read another run's half-written artifact and reported
- * "second read still equals pristine ... revision ... != ..."). A stale lock from
- * a crashed run is broken by age, so a kill can never wedge the suite.
+ * "second read still equals pristine ... revision ... != ...").
+ *
+ * A lock whose owner is gone is broken immediately, so a killed run cannot wedge
+ * the suite; only a lock held by a live process is honoured, and that one is
+ * reported instead of waited on.
  */
 export async function cleanStage() {
   const lock = join(STAGE, ".lock");
@@ -160,15 +163,19 @@ export async function cleanStage() {
     if (error?.code !== "EEXIST") throw error;
   }
   if (!held) {
-    const stale = await stat(lock).catch(() => undefined);
-    const ageMs = stale === undefined ? 0 : Date.now() - stale.mtimeMs;
-    if (ageMs < LOCK_STALE_MS) {
+    const owner = Number((await readFile(lock, "utf8").catch(() => "")).trim().split(/\s+/)[0]);
+    const alive = Number.isInteger(owner) && owner > 0 && isAlive(owner);
+    if (alive) {
+      const stale = await stat(lock).catch(() => undefined);
       throw new Error(
-        "another run owns the stage root " + STAGE + " (lock is " + Math.round(ageMs / 1000) + "s old). " +
+        "another run owns the stage root " + STAGE + " (pid " + owner + ", lock is " +
+          Math.round((Date.now() - (stale?.mtimeMs ?? Date.now())) / 1000) + "s old). " +
           "Run them one at a time, or point GATE_STAGE at a private directory.",
       );
     }
-    console.log("  note  breaking a stale stage lock (" + Math.round(ageMs / 1000) + "s old)");
+    // The owner is gone: its fixtures are abandoned, and waiting out an age
+    // timeout would only waste the next run's time.
+    console.log("  note  breaking an abandoned stage lock" + (owner > 0 ? " (pid " + owner + " is gone)" : ""));
     await writeFile(lock, String(process.pid) + " " + new Date().toISOString());
   }
   await rm(join(STAGE, "sessions"), { recursive: true, force: true });
@@ -178,8 +185,21 @@ export async function cleanStage() {
   await mkdir(join(ORIGIN, "sessions"), { recursive: true });
 }
 
-/** A crashed run must not wedge the next one. */
-const LOCK_STALE_MS = Number(process.env.GATE_LOCK_STALE_MS ?? 30 * 60 * 1000);
+/**
+ * Whether a pid is still running.
+ *
+ * Signal 0 performs the permission and existence checks without delivering
+ * anything. EPERM means the process exists but belongs to someone else, which
+ * still counts as alive.
+ */
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
 
 /** Release the stage lock. Entry scripts call this on their way out. */
 export async function unlockStage() {
@@ -193,6 +213,34 @@ export function release(...values) {
     if (value.backend !== undefined) value.backend.coldLogMemo?.clear?.();
   }
   globalThis.gc?.();
+}
+
+/**
+ * The first object in an event graph that is NOT frozen, as a path, or undefined.
+ *
+ * The extension path only freezes the events an append adds, and trusts that the
+ * resident ones were frozen when they first arrived. That trust is the entire
+ * basis of the optimization (deep-freezing the whole merged list cost 191 ms per
+ * turn on a 60k-event log, and it grows with the session), so the gate verifies it
+ * against real output instead of assuming it. A violation is reported as a path so
+ * a failure says WHERE the graph is open, not just that it is.
+ */
+export function unfrozenIn(value, path = "$") {
+  const pending = [[value, path]];
+  const seen = new Set();
+  while (pending.length > 0) {
+    const [current, where] = pending.pop();
+    if (current === null || typeof current !== "object") continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (!Object.isFrozen(current)) return where;
+    if (Array.isArray(current)) {
+      for (let index = 0; index < current.length; index += 1) pending.push([current[index], where + "[" + index + "]"]);
+    } else {
+      for (const key of Object.keys(current)) pending.push([current[key], where + "." + key]);
+    }
+  }
+  return undefined;
 }
 
 export async function sha256(path) {

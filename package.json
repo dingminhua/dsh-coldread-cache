@@ -24,7 +24,11 @@
     "test": "node tests/probe-deps.mjs && node tests/probe-install.mjs",
     "gate": "node --expose-gc --max-old-space-size=12288 tests/gate/run.mjs",
     "perf": "node --expose-gc --max-old-space-size=12288 tests/perf-ab.mjs",
-    "fault": "node --expose-gc --max-old-space-size=8192 tests/fault-injection.mjs"
+    "fault": "node --expose-gc --max-old-space-size=8192 tests/fault-injection.mjs",
+    "probe:freeze": "node --expose-gc --max-old-space-size=12288 tests/probe-extension-cost.mjs",
+    "probe:evict": "node --expose-gc --max-old-space-size=12288 tests/probe-eviction.mjs",
+    "probe:budget": "node --expose-gc --max-old-space-size=12288 tests/probe-budget.mjs",
+    "probe:heap": "node --expose-gc --max-old-space-size=12288 tests/probe-heap.mjs"
   },
   "dsh": {
     "bundle": {

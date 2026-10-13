@@ -6,8 +6,9 @@
  * and their results are deep-compared. No mocks stand in for the backend, the
  * decoder, or the files.
  *
- * The gate is proven able to fail: section 7 injects a stale answer into the
- * cache and requires the comparison to catch it.
+ * The gate is proven able to fail: section 7 injects a stale answer into the cache
+ * and requires the comparison to catch it, and section 8's residency assertion is
+ * shown to fail when the write ranking it depends on is neutralized.
  *
  * Run: node tests/gate/run.mjs
  */
@@ -16,7 +17,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   check, cleanStage, compareLogs, listSessions, makeBackend, makePatchedBackend, nextClosedTurn,
-  prefixEndingAtClosedTurn, release, section, sha256, stage, summary, STAGE, unlockStage,
+  prefixEndingAtClosedTurn, release, section, sha256, stage, summary, STAGE, unfrozenIn, unlockStage,
 } from "./harness.mjs";
 
 // The installed backends this plugin mounts onto. The default is the backend the
@@ -205,6 +206,17 @@ check(compareLogs(expectedFull, actualFull, { revision: false }).length === 0, "
 check(statsAfter.coldParses === statsBefore.coldParses, "growth did NOT trigger a cold parse", "coldParses " + statsBefore.coldParses + " -> " + statsAfter.coldParses);
 check(statsAfter.extensions >= 1, "growth was served by an extension", "extensions=" + statsAfter.extensions);
 check(actualFull.events[0] === actualPrefix.events[0], "the prefix's frozen event objects survived the extension");
+// The extension freezes only the appended events and trusts that the resident ones
+// are already frozen. That trust is what makes the extension cheap, so verify the
+// result really is frozen all the way down -- and verify the check can fail, or it
+// is decoration.
+const unfrozen = unfrozenIn(actualFull.events);
+check(unfrozen === undefined, "every event in the extended result is deeply frozen", String(unfrozen));
+check(
+  unfrozenIn(Object.freeze([{ open: true }])) === "$[0]",
+  "the deep-frozen check really can report a violation",
+  String(unfrozenIn(Object.freeze([{ open: true }]))),
+);
 check(actualPrefix.events.every((event, index) => actualFull.events[index] === event), "every prefix event object is the same object after growth");
 
 // The extension must not have left the pristine memo out of date.
@@ -397,7 +409,104 @@ sabotage.disposer();
 release(staleAnswer, shortTruth, recovered, smallFull, shortBytes, flipped);
 
 /* ------------------------------------------------------------------ */
-section("8. the vendored backend is still untouched");
+section("8. a written session keeps its residency under bystander traffic");
+/* ------------------------------------------------------------------ */
+
+/*
+ * The defect this guards, measured on a real host: 85 minutes of use, 405 reads
+ * served from residency, and ZERO extensions. Eviction ranked entries by read
+ * recency, and a bystander read is a cold parse that makes that bystander the
+ * most recently used entry -- so the session being appended to was pushed out
+ * before its next append could extend it, which is the one case the plugin exists
+ * for. A written session must outrank a merely-read one.
+ */
+// The active session has to accept an append, and an append needs a file whose
+// recovered state ends at a CLOSED turn: the lifecycle validator refuses a
+// `turn/start` while a turn is open, and real artifacts routinely end mid-turn.
+// A readability probe is not enough -- the torn artifact in this corpus reads
+// back successfully but ends mid-turn -- so reuse section 2's cut, which is the
+// operation that produces a legal place to continue from.
+const evictActive = big;
+// Bystanders are only ever read, and a read is a cold parse whether the artifact
+// is 4 MB or 90 MB. Small ones keep the section's memory bounded -- staging the
+// whole corpus a second time aborted the process with 0xC0000409 instead of
+// failing a check, which is a gate that cannot report its own verdict.
+const evictStaged = [];
+for (const candidate of candidates) {
+  if (evictStaged.length >= 4) break;
+  if (candidate.id === evictActive.id) continue;
+  if (candidate.bytes > 6 * 1024 * 1024 || candidate.bytes < 64 * 1024) continue;
+  evictStaged.push(await stage(candidate.id));
+}
+check(evictStaged.length >= 2, "there are bystander sessions to read", String(evictStaged.length));
+
+/**
+ * Run the eviction scenario once, from a freshly cut artifact.
+ *
+ * `inject` neutralizes the write ranking, which reproduces the production defect
+ * this section guards: with the ranking gone, eviction falls back to read
+ * recency, so a bystander read evicts the session being appended to. The injected
+ * run MUST fail to extend -- that is what proves the un-injected run's success
+ * means something, and it is the same fault a real host showed (405 reads served
+ * from residency, zero extensions, every fallback classified `no-entry`).
+ */
+async function evictionScenario(inject) {
+  const attempt = await stage(evictActive.id);
+  const cut = await prefixEndingAtClosedTurn(attempt.path);
+  if (cut === undefined) return undefined;
+  await writeFile(attempt.path, cut.bytes);
+  const patched = makePatchedBackend(STAGE + "\\\\sessions", { maxEntries: 2 });
+  const real = patched.cache.noteWrite;
+  if (inject) patched.cache.noteWrite = () => {};
+  const writer = await patched.backend.open(evictActive.id, "write");
+  let read = await writer.read();
+  await writer.append(nextClosedTurn({ events: read.events }));
+  read = await writer.read();
+  const first = patched.cache.stats.extensions;
+  // Bystander reads are what a busy host does between turns of the active session.
+  for (let round = 0; round < 3; round += 1) {
+    for (const bystander of evictStaged) {
+      const handle = await patched.backend.open(bystander.id, "read");
+      await handle.read();
+      await handle.close();
+    }
+  }
+  await writer.append(nextClosedTurn({ events: read.events }));
+  read = await writer.read();
+  const second = patched.cache.stats.extensions;
+  const resident = patched.cache.size;
+  await writer.close();
+  if (inject) patched.cache.noteWrite = real;
+  check(patched.cache.noteWrite === real, "the injected ranking was removed", String(patched.cache.noteWrite === real));
+  patched.disposer();
+  release(read);
+  return { first, second, resident };
+}
+
+const injected = await evictionScenario(true);
+check(injected !== undefined, "the eviction scenario ran");
+if (injected !== undefined) {
+  check(injected.first >= 1, "the first append extends the resident parse", String(injected.first));
+  check(
+    injected.second === injected.first,
+    "the injection reproduces the defect, so the check below is able to fail",
+    "extensions " + injected.first + " -> " + injected.second,
+  );
+}
+
+const survived = await evictionScenario(false);
+check(survived !== undefined, "the un-injected eviction scenario ran");
+if (survived !== undefined) {
+  check(survived.first >= 1, "the first append extends the resident parse", String(survived.first));
+  check(
+    survived.second > survived.first,
+    "a written session stays resident through bystander reads, so the next append extends it",
+    "extensions " + survived.first + " -> " + survived.second + " across " + evictStaged.length * 3 + " bystander reads",
+  );
+  check(survived.resident <= 2, "residency stayed inside its entry budget", String(survived.resident));
+}
+/* ------------------------------------------------------------------ */
+section("9. the vendored backend is still untouched");
 /* ------------------------------------------------------------------ */
 
 const after = [];
