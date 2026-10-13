@@ -63,6 +63,34 @@ for (let index = 0; index < VENDOR.length; index += 1) {
 
 }
 
+/* ------------------------------------------------------------------ */
+section("0b. the configured defaults are the ones the code uses");
+/* ------------------------------------------------------------------ */
+
+/*
+ * The default budget lived in two literals -- the schema's and the install path's --
+ * and they drifted: the schema advertised 128 MB while a caller that passed no
+ * config got 32 MB, a budget measurement had already shown to be a regression
+ * (residency hit rate 14% vs 53%). The schema is documentation; the fallback is
+ * behaviour, and a user reading one while getting the other is the bug. Deriving
+ * both from one constant is the fix, and this is what would have caught it.
+ */
+const { Config, DEFAULTS } = await import("../../lib/index.js");
+const parsedDefaults = Config({});
+for (const key of ["enabled", "maxEntries", "maxResidentBytes", "statusFile"]) {
+  check(
+    parsedDefaults[key] === DEFAULTS[key],
+    "the schema default and the install fallback agree on " + key,
+    "schema=" + String(parsedDefaults[key]) + " fallback=" + String(DEFAULTS[key]),
+  );
+}
+check(Object.isFrozen(DEFAULTS), "the defaults cannot be mutated at runtime");
+check(
+  DEFAULTS.maxResidentBytes === 128 * 1024 * 1024,
+  "the budget default is the one measurement chose",
+  String(DEFAULTS.maxResidentBytes),
+);
+
 await cleanStage();
 
 /* ------------------------------------------------------------------ */

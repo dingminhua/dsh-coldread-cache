@@ -28,7 +28,12 @@
     "probe:freeze": "node --expose-gc --max-old-space-size=12288 tests/probe-extension-cost.mjs",
     "probe:evict": "node --expose-gc --max-old-space-size=12288 tests/probe-eviction.mjs",
     "probe:budget": "node --expose-gc --max-old-space-size=12288 tests/probe-budget.mjs",
-    "probe:heap": "node --expose-gc --max-old-space-size=12288 tests/probe-heap.mjs"
+    "probe:heap": "node --expose-gc --max-old-space-size=12288 tests/probe-heap.mjs",
+    "probe:traffic": "node --expose-gc --max-old-space-size=12288 tests/probe-traffic-shape.mjs",
+    "probe:handle": "node --expose-gc --max-old-space-size=8192 tests/probe-write-handle.mjs",
+    "probe:defaults": "node tests/probe-defaults.mjs",
+    "probe:status": "node --expose-gc --max-old-space-size=8192 tests/probe-status-fields.mjs",
+    "probe:overbudget": "node --expose-gc --max-old-space-size=8192 tests/probe-overbudget.mjs"
   },
   "dsh": {
     "bundle": {

@@ -162,6 +162,28 @@ switching between sessions. So 128 MB is the smallest budget that serves a real
 working set, and lowering it trades a measured regression for a memory saving that
 is not the bottleneck.
 
+### When does the extension counter climb?
+
+`extensions` only climbs in one situation: the host appends to a session and then
+**reads that same session**. Three traffic shapes were measured (8 turns each, real
+sessions, 254 MB of fixtures):
+
+| traffic shape | extensions | cold parses |
+| --- | --- | --- |
+| append, then read the same session (32 MB budget) | 8 | 0 |
+| append, then read the same session (128 MB budget) | 8 | 0 |
+| append, then read 4 other sessions first (32 MB budget) | 8 | 32 |
+| append, then read 4 other sessions first (128 MB budget) | 8 | 32 |
+| **read-only, nothing appended** | **0** | 15 |
+
+So `extensions: 0` is **not by itself a fault**: if a host only browsed sessions and
+did not run consecutive turns in one of them, zero extensions is the correct reading
+and `coldParses` is what grows. Whether the plugin is working is judged by whether the
+read that FOLLOWS an append takes the extension path, not by the absolute count. Two
+other candidates were ruled out by the same measurements: the write-handle branch (a
+host's own append-then-read loop **does** take the fast path) and the budget size (8/8
+extensions even at 32 MB with bystander traffic).
+
 ### Why it got laggy after long use (fixed)
 
 The extension path **deep-froze the whole session's event graph on every turn**:
@@ -324,10 +346,18 @@ the status file said:
 ```
 
 **405 reads served from residency, zero extensions, and all 369 fallbacks classified
-`no-entry`** — so the one case the plugin exists for never once succeeded in real
-use. The cause is the eviction order described above. This was found by reading the
-live counters, not by a test; the fix is what the "Eviction order" section and its
-regression assertion are about.
+`no-entry`.** Note that `extensions: 0` alone is **not enough to call this a fault**
+(see "When does the extension counter climb?" above). What pins it down is a
+**controlled experiment**: with 2 resident entries and 64 bystander reads, does
+"append then read the same session" still extend? With the write ranking it does
+(1 -> 2); with the ranking neutralized it does **not** (1 -> 1). Same code, same file,
+the ranking is the only difference, so the mechanism holds.
+
+So the eviction order was a real defect (ranking by read recency lets a bystander
+cold parse push out the session being written), and the 85 minutes of live counters
+are consistent with it. This was found by reading the live counters, not by a test;
+the fix is what the "Eviction order" section and its fault-injected regression
+assertion are about.
 
 ## Limitations
 
