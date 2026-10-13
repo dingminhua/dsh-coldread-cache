@@ -198,10 +198,16 @@ pnpm run fault         # 故障注入：证明上面的门禁真的能变红
 pnpm run perf          # 真实会话日志上的「追加后读取」A/B
 pnpm test              # 依赖与安装机制探针
 
+pnpm run compat        # 对每一棵装了后端的 DSH 树跑完整回路（多版本兼容）
+pnpm run probe:contract # 契约能变红：摘掉一个 helper 必须被拒绝
+
 pnpm run probe:freeze  # 每轮全量冻结 vs 只冻结新事件（回归断言）
 pnpm run probe:evict   # 旁观流量下常驻能否存活（回归断言）
 pnpm run probe:budget  # 各预算档的常驻命中率（默认值就是靠它定的）
 pnpm run probe:heap    # 常驻的堆开销（源字节 → 堆的换算比例）
+pnpm run probe:segments # 校验能不能分段（证明剩下的开销是下限）
+pnpm run probe:breakdown # 一次扩展的逐阶段耗时
+pnpm run probe:artifact  # reader.artifact() 的代价（证明显式校验不是多余的）
 ```
 
 `probe:*` 这几条是把 README 里的数字量出来的脚本，不是装饰：`probe:freeze` 和
@@ -299,6 +305,90 @@ hits=11  ext=2  cold=4     ← 再一轮：又两次扩展
 结论：淘汰顺序确实是一个真实缺陷（按读的最近性淘汰，会被旁观会话的冷读把正在写入的会话
 挤出去），实机那 85 分钟的计数器与它一致。这条是看实机计数器发现的，不是靠测试发现的；
 修完才有「淘汰顺序」那节、以及门禁里那条**带故障注入**的回归断言。
+
+## 多版本兼容
+
+插件不是改源码，而是挂在一个**已发布的后端**上：它静态 import 七个 `@deepseek-ai/*` 包，
+并在 `dsh-session-persistence-jsonl` 的实例上替换五个方法。所以「兼容」必须意味着
+**换一棵我没在上面开发的 DSH 树也能跑**，而不是「在我这台机器上能跑」。
+
+### 声明的接口面
+
+插件对后端的依赖分成两类，分开列是因为失败方式不一样：
+
+| 类别 | 成员 | 缺了会怎样 |
+| --- | --- | --- |
+| 被替换的 | `readStoredLog`、`decodeStoredLog`、`persistBatch`、`persistHeader`、`truncateTornTail` | 不安装——一个都不写 |
+| 被调用的 | `assertStoredIdentity`、`locate`、`memoizeStoredLog` | 不安装，并给出可读原因 |
+
+第一类缺了不能安装；第二类缺了更麻烦——替换进去的代码会在**别人的读路径里面**抛异常，
+那时候已经退无可退。两类都在**写任何东西之前**探测，所以版本搬家只会退化成原始后端，
+不会装一半。
+
+### 怎么测的
+
+```sh
+pnpm run compat          # 对机器上每一棵装了后端的 DSH 树跑一遍完整回路
+pnpm run probe:contract  # 契约本身能变红：摘掉一个 helper 必须被拒绝
+```
+
+`compat` 会自己在标准位置找树（也可以用 `DSH_TREES` 指定），对每棵树：建一份**用那棵树自己写的**
+会话日志，挂上插件，真追加一个批次，再真读回来，断言这次读是**扩展常驻解析**而不是重新冷读。
+本机 3 棵树、2 个版本（`0.2.0-rc.2` 与 `0.2.1-alpha.2`）全部 `COMPAT_GREEN checks=16`。
+
+测试还用一个 loader hook 把插件**自己的** `@deepseek-ai` import 也重定向到被测的那棵树上。
+没有这一步，测的其实是「A 树的后端 + B 树的校验模块」——两棵树一样时看不出来，
+而那种情况恰恰最不容易被发现。
+
+```
+COMPAT_ALL_GREEN trees=3 failed=0
+  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.0-rc.2
+  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.1-alpha.2 (nightly)
+  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.1-alpha.2 (stable)
+```
+
+### 顺带发现的两件事
+
+- 两个版本的差异只有 17 行旧/21 行新，全在迁移校验的退出处理与 `readGenerationHeader`
+  改名（`header` → `metadata`），**读写路径一行没动**。
+- 老树（`0.2.0-rc.2`）**读不了新 harness 写的会话**：它把 `working-directory/change`
+  当成未知且不可忽略的事件类型直接拒绝。这是**数据层**的不兼容，跟插件无关，
+  但足以说明为什么测试 fixture 必须由被测的那棵树自己生成。
+
+## 优化到哪里为止
+
+这一轮的目标是「在确认无法继续优化的时候停下」。结论是：**剩下的 57 ms 是已发布校验器的价钱，
+插件不该也不能替它省。**
+
+一条 55 MB / 58523 事件的会话，一次扩展共 **63.2 ms**，拆开看：
+
+| 阶段 | 耗时 | 占比 |
+| --- | --- | --- |
+| `assertReleasedV4Relationships`（遍历全部事件） | 56.91 ms | 90% |
+| 整表扫描（O(n) 对照） | 2.01 ms | 3% |
+| `concat`（O(n) 数组拷贝） | 0.31 ms | 0.5% |
+| 其余 | ~3.9 ms | 6% |
+
+想过把它分段（只校验新追加的事件），`probe:segments` 直接否掉了这个方向：
+
+```
+全量遍历 58523 个事件     80.6 ms   通过
+只校验最后 4 个事件        0.07 ms
+  只校验尾部的结果：tool/ptc-dispatch is outside an open turn
+  从 turn/end 之后切一段：turn/start does not open the expected turn
+```
+
+**校验是一个顺序状态机，一个事件能不能被接受取决于它前面的事件。**尾部单独校验会被拒绝，
+所以「从检查点续跑」在这里不成立。要做的话得重新实现 `Relationships` 那套状态机
+（`dsh-session-format-v3-to-v4` 里 539–857 行），而它是模块私有的、没有导出——
+那等于在已发布的校验逻辑上另起一套，比之前的冻结修复风险大得多，不值得。
+
+另外两点也确认过了：
+
+- `entry.reader.artifact()` 是 **0.0 ms**（它只检查版本号就返回），所以插件显式调用校验器
+  **不是多余的**——它是这条路径上唯一的全量校验。
+- CPU profile 显示开销主要来自冷解析的第一遍（`#consume` 22.5%、`processChunkSync` 13.2%、
+  GC 9.0%），不是校验循环本身。
 
 ## 限制
 

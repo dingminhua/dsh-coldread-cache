@@ -534,7 +534,58 @@ if (survived !== undefined) {
   check(survived.resident <= 2, "residency stayed inside its entry budget", String(survived.resident));
 }
 /* ------------------------------------------------------------------ */
-section("9. the vendored backend is still untouched");
+section("9. the compatibility contract holds on the installed backend");
+/* ------------------------------------------------------------------ */
+
+{
+  const { applyToService } = await import("../../lib/index.js");
+  const HOOKS = ["readStoredLog", "decodeStoredLog", "persistBatch", "persistHeader", "truncateTornTail"];
+  const { ctx, backend } = makeBackend(STAGE + "\\sessions");
+
+  // The installed backend must satisfy the declared surface: five patch points plus
+  // the three helpers the replacements call.
+  {
+    const { state, disposer } = makePatchedBackend(STAGE + "\\sessions", {}, backend);
+    check(state?.installed?.length === 5, "the installed backend installs all five hooks", String(state?.installed?.length));
+    check(Object.keys(state?.failures ?? {}).length === 0, "the installed backend meets the declared contract",
+      JSON.stringify(state?.failures));
+    disposer();
+  }
+
+  // The refusal must be reachable. These are prototype methods, so deleting an own
+  // property proves nothing -- shadow the helper with a non-function own property,
+  // which is what an API that moved looks like.
+  {
+    const before = HOOKS.map((key) => backend[key]);
+    Object.defineProperty(backend, "memoizeStoredLog", { value: undefined, configurable: true, writable: true });
+    try {
+      const service = { [Symbol.for("cordis.original")]: backend };
+      const disposer = applyToService(ctx, service, {});
+      const state = backend[Symbol.for("dsh.coldread-cache.ownership")];
+      check(state?.installed?.length === 0, "a backend missing a helper is refused, not half-patched",
+        JSON.stringify(state?.installed));
+      check(typeof state?.failures?.required === "string" && state.failures.required.includes("memoizeStoredLog"),
+        "the refusal names the missing member", JSON.stringify(state?.failures));
+      check(HOOKS.every((key, index) => backend[key] === before[index]),
+        "no hook was written on a refused backend");
+      disposer?.();
+    } finally {
+      delete backend.memoizeStoredLog;
+    }
+  }
+
+  // And the same instance must install once the helper is back, so the refusal above
+  // was caused by the removal and not by a second attach being impossible.
+  {
+    const { state, disposer } = makePatchedBackend(STAGE + "\\sessions", {}, backend);
+    check(state?.installed?.length === 5, "the instance installs once the helper is restored", JSON.stringify(state?.failures));
+    disposer();
+  }
+  check(HOOKS.every((key) => !Object.hasOwn(backend, key)), "the instance is pristine after the contract checks");
+}
+
+/* ------------------------------------------------------------------ */
+section("10. the vendored backend is still untouched");
 /* ------------------------------------------------------------------ */
 
 const after = [];

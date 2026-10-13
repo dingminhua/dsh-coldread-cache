@@ -237,6 +237,11 @@ pnpm run gate          # acceptance gate over the real vendored backend
 pnpm run fault         # fault injection: prove the gate above can turn red
 pnpm run perf          # append-then-read A/B on a real session log
 pnpm test              # dependency and install-mechanism probes
+pnpm run compat        # full cycle against every installed DSH tree (multi-version)
+pnpm run probe:contract # the contract can fail: removing a helper must be refused
+pnpm run probe:segments # whether validation can be segmented (proves the floor)
+pnpm run probe:breakdown # per-stage cost of one extension
+pnpm run probe:artifact  # what reader.artifact() costs (proves the explicit check is needed)
 
 pnpm run probe:freeze  # per-turn full freeze vs freezing only new events (asserted)
 pnpm run probe:evict   # does residency survive bystander traffic (asserted)
@@ -358,6 +363,102 @@ cold parse push out the session being written), and the 85 minutes of live count
 are consistent with it. This was found by reading the live counters, not by a test;
 the fix is what the "Eviction order" section and its fault-injected regression
 assertion are about.
+
+## Multi-version compatibility
+
+The plugin does not edit a source tree; it mounts onto a **released backend**. It statically
+imports seven `@deepseek-ai/*` packages and replaces five methods on the
+`dsh-session-persistence-jsonl` instance. So "compatible" has to mean **it works against a DSH
+tree I did not develop on**, not "it works on my machine".
+
+### The declared surface
+
+The plugin's dependence on the backend splits into two kinds, listed separately because they
+fail differently:
+
+| Kind | Members | What a missing member does |
+| --- | --- | --- |
+| Replaced | `readStoredLog`, `decodeStoredLog`, `persistBatch`, `persistHeader`, `truncateTornTail` | Does not install — writes nothing |
+| Called | `assertStoredIdentity`, `locate`, `memoizeStoredLog` | Does not install, with a readable reason |
+
+A missing patch point cannot be installed around. A missing helper is worse: the replacement
+would throw from **inside somebody else's read**, where there is no recovering. Both are probed
+**before anything is written**, so a version that moved degrades to the pristine reader instead
+of half-installing.
+
+### How it is tested
+
+```sh
+pnpm run compat          # the full cycle against every DSH tree on the machine
+pnpm run probe:contract  # the contract can fail: removing a helper must be refused
+```
+
+`compat` finds the trees itself (or takes `DSH_TREES`), and for each one: builds a session log
+**written by that tree**, attaches the plugin, appends a real batch, reads it back, and asserts
+the read was served by **extending the resident parse** rather than a cold re-decode. On this
+machine, 3 trees across 2 versions (`0.2.0-rc.2` and `0.2.1-alpha.2`) are all
+`COMPAT_GREEN checks=16`.
+
+The suite also uses a loader hook to redirect the plugin's **own** `@deepseek-ai` imports onto
+the tree under test. Without that step the test is really "tree A's backend driven by tree B's
+validation modules" — invisible when both trees are identical, which is exactly when it would be
+least likely to be noticed.
+
+```
+COMPAT_ALL_GREEN trees=3 failed=0
+  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.0-rc.2
+  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.1-alpha.2 (nightly)
+  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.1-alpha.2 (stable)
+```
+
+### Two things the survey turned up
+
+- The two versions differ by 17 old / 21 new lines, all in the migration verifier's exit
+  handling and a `readGenerationHeader` rename (`header` → `metadata`). **Nothing in the read or
+  append path changed.**
+- The older tree (`0.2.0-rc.2`) **cannot read a session the newer harness wrote**: it refuses
+  `working-directory/change` as an unknown, non-ignorable event type. That is a **data-level**
+  incompatibility, unrelated to the plugin — and it is why a test fixture must be produced by the
+  tree under test.
+
+## Where optimization stops
+
+This round's goal was to stop once no further optimization is confirmed possible. The conclusion
+is that **the remaining 57 ms is the released validator's price, and a plugin should not and
+cannot remove it.**
+
+One extension over a 55 MB / 58523-event session costs **63.2 ms** in total:
+
+| Stage | Time | Share |
+| --- | --- | --- |
+| `assertReleasedV4Relationships` (walks every event) | 56.91 ms | 90% |
+| Full-list scan (O(n) control) | 2.01 ms | 3% |
+| `concat` (O(n) array copy) | 0.31 ms | 0.5% |
+| Everything else | ~3.9 ms | 6% |
+
+Segmenting it — validating only the newly appended events — was considered, and
+`probe:segments` rules it out:
+
+```
+full walk over all 58523 events   80.6 ms   accepted
+walk over only the last 4 events   0.07 ms
+  tail-only validation: tool/ptc-dispatch is outside an open turn
+  a segment after turn/end: turn/start does not open the expected turn
+```
+
+**Validation is a sequential state machine: whether an event is accepted depends on the events
+before it.** A tail slice is refused outright, so "resume from a checkpoint" does not hold here.
+Doing it would mean reimplementing the `Relationships` state machine
+(lines 539–857 of `dsh-session-format-v3-to-v4`), which is module-local and unexported — i.e.
+standing up a second copy of released validation logic. That is a much larger risk than the freeze
+fix was, and it is not worth taking.
+
+Two related points were also confirmed:
+
+- `entry.reader.artifact()` costs **0.0 ms** (it checks the version and returns), so the plugin's
+  explicit validator call is **not redundant** — it is the only full validation on this path.
+- The CPU profile shows the cost is dominated by the cold parse's first pass (`#consume` 22.5%,
+  `processChunkSync` 13.2%, GC 9.0%), not by the validator loop itself.
 
 ## Limitations
 

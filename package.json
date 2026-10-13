@@ -33,7 +33,12 @@
     "probe:handle": "node --expose-gc --max-old-space-size=8192 tests/probe-write-handle.mjs",
     "probe:defaults": "node tests/probe-defaults.mjs",
     "probe:status": "node --expose-gc --max-old-space-size=8192 tests/probe-status-fields.mjs",
-    "probe:overbudget": "node --expose-gc --max-old-space-size=8192 tests/probe-overbudget.mjs"
+    "probe:overbudget": "node --expose-gc --max-old-space-size=8192 tests/probe-overbudget.mjs",
+    "probe:contract": "node --expose-gc --max-old-space-size=8192 tests/probe-compat-contract.mjs",
+    "probe:segments": "node --expose-gc --max-old-space-size=12288 tests/probe-validator-segments.mjs",
+    "probe:breakdown": "node --expose-gc --max-old-space-size=12288 tests/probe-breakdown.mjs",
+    "probe:artifact": "node --expose-gc --max-old-space-size=12288 tests/probe-artifact-cost.mjs",
+    "compat": "node --expose-gc --max-old-space-size=12288 tests/compat-all.mjs"
   },
   "dsh": {
     "bundle": {
