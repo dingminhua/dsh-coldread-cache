@@ -263,6 +263,13 @@ const patchedTorn = makePatchedBackend(STAGE + "\\sessions");
 await writeFile(staged.path, prefixBytes);
 await patchedTorn.backend.readStoredLog(staged.path, big.id, undefined);
 await writeFile(staged.path, tornBytes);
+// Hash the artifact on both sides of the comparison. The plugin refuses the fast path on a torn
+// tail and hands the SAME bytes to the same pristine reader, so the two answers must be identical
+// -- and if they ever are not, the first question is whether both reads saw the same file. An
+// earlier version of this section compared unordered multisets and did not hash, so a rare
+// disagreement was undiagnosable: it reported "differ at 1 positions" with no way to tell a
+// plugin defect from the fixture having moved.
+const tornHashBefore = await sha256(staged.path);
 let expectedTorn;
 let expectedTornError;
 try {
@@ -270,6 +277,7 @@ try {
 } catch (error) {
   expectedTornError = error;
 }
+const tornHashBetween = await sha256(staged.path);
 let actualTorn;
 let actualTornError;
 try {
@@ -277,6 +285,10 @@ try {
 } catch (error) {
   actualTornError = error;
 }
+const tornHashAfter = await sha256(staged.path);
+check(tornHashBefore === tornHashBetween && tornHashBetween === tornHashAfter,
+  "the torn artifact was byte-identical across both reads (the comparison is meaningful)",
+  tornHashBefore.slice(0, 16) + " / " + tornHashBetween.slice(0, 16) + " / " + tornHashAfter.slice(0, 16));
 if (expectedTornError !== undefined || actualTornError !== undefined) {
   check(expectedTornError !== undefined && actualTornError !== undefined, "a torn artifact is refused by both", String(expectedTornError?.message ?? actualTornError?.message));
 } else {
@@ -285,7 +297,36 @@ if (expectedTornError !== undefined || actualTornError !== undefined) {
   // may decode the recovered tail with a different yield point. The promise is
   // that the plugin never answers from residency here, not that it stops at the
   // same byte as an independent decode of a deliberately damaged file.
-  const diffs = compareLogs(expectedTorn, actualTorn, { revision: false, order: "set" });
+  // Exact comparison. The multiset form was chosen to allow recovery latitude, but on a torn
+  // tail the plugin does not recover anything itself: it refuses the fast path and the pristine
+  // reader produces the answer. Both sides therefore run the same code on the same bytes, and a
+  // set-level match would hide a reordering that the loose form was written to permit.
+  const diffs = compareLogs(expectedTorn, actualTorn, { revision: false });
+  if (diffs.length > 0) {
+    // Dump the differing events. A count cannot be acted on; the event can. This path only
+    // runs when the check has already failed, so it costs nothing on a green run.
+    const left = expectedTorn.events.map((event) => JSON.stringify(event)).sort();
+    const right = actualTorn.events.map((event) => JSON.stringify(event)).sort();
+    const counts = new Map();
+    for (const event of left) counts.set(event, (counts.get(event) ?? 0) + 1);
+    for (const event of right) counts.set(event, (counts.get(event) ?? 0) - 1);
+    console.log("       pristine events=" + left.length + " patched events=" + right.length);
+    let shown = 0;
+    for (const [event, n] of counts) {
+      if (n === 0 || shown >= 3) continue;
+      shown += 1;
+      console.log("       " + (n > 0 ? "ONLY PRISTINE" : "ONLY PATCHED") + " x" + Math.abs(n) + " " + event.slice(0, 400));
+    }
+    if (shown === 0) {
+      // Equal multisets but a different order: report the first index whose string differs.
+      const at = left.findIndex((event, index) => event !== right[index]);
+      console.log("       equal multisets, first differing sorted index " + at);
+      console.log("       pristine " + String(left[at]).slice(0, 300));
+      console.log("       patched  " + String(right[at]).slice(0, 300));
+      console.log("       keyOrderPristine " + JSON.stringify(Object.keys(expectedTorn.events[0] ?? {})));
+      console.log("       keyOrderPatched  " + JSON.stringify(Object.keys(actualTorn.events[0] ?? {})));
+    }
+  }
   check(diffs.length === 0, "torn-tail read recovers the same events as pristine", diffs.join("; "));
   check(patchedTorn.cache.stats.reasons["torn-tail"] > 0, "the torn tail was refused by the fast path", JSON.stringify(patchedTorn.cache.stats.reasons));
 }

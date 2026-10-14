@@ -266,8 +266,24 @@ export function compareLogs(a, b, options = {}) {
     // stop at different points; this says whether they recovered the same set.
     const left = a.events.map((event) => JSON.stringify(event)).sort();
     const right = b.events.map((event) => JSON.stringify(event)).sort();
-    const missing = left.filter((event, index) => event !== right[index]);
-    if (missing.length > 0) diffs.push("the recovered event sets differ at " + missing.length + " positions");
+    // "differ at N positions" alone cannot be acted on: it does not say whether a whole event
+    // is missing, one event was recovered twice, or a single field came out different. Report
+    // the multiset difference and the first differing pair, so a red run is diagnosable.
+    const counts = new Map();
+    for (const event of left) counts.set(event, (counts.get(event) ?? 0) + 1);
+    for (const event of right) counts.set(event, (counts.get(event) ?? 0) - 1);
+    const onlyLeft = [...counts].filter(([, n]) => n > 0).map(([event, n]) => n + "x " + event.slice(0, 120));
+    const onlyRight = [...counts].filter(([, n]) => n < 0).map(([event, n]) => -n + "x " + event.slice(0, 120));
+    // A multiset difference IS the answer. An earlier version also compared the sorted arrays
+    // element-wise and pushed a diff unconditionally -- but equal multisets make the sorted
+    // arrays equal by construction, so that branch could only ever report "no difference" as a
+    // failure. It turned a passing comparison red.
+    if (onlyLeft.length > 0) {
+      diffs.push("only in pristine (" + onlyLeft.length + "): " + onlyLeft.slice(0, 2).join(" | "));
+    }
+    if (onlyRight.length > 0) {
+      diffs.push("only in patched (" + onlyRight.length + "): " + onlyRight.slice(0, 2).join(" | "));
+    }
     return diffs;
   }
   // Deep equality, not a JSON round trip: these logs hold tens of thousands of

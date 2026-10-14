@@ -526,6 +526,50 @@ FAIL the decoder selection matches what this runtime supports
 Note that the **timing** check in the same run was still green — which is exactly the point: **a timing
 difference is not evidence that the mechanism works.**
 
+### A third gate defect: a false red
+
+One of the verification rounds went red on the torn-tail check: `the recovered event sets differ at
+1 positions`. A one-in-five failure is the hardest kind: not reproducible on demand, and the message
+was **undiagnosable** — it did not say whether an event was missing, an extra one appeared, or one
+field differed.
+
+So the first three steps were not about the plugin:
+
+1. **Make it diagnosable.** Replace "differ at N positions" with a multiset difference that prints
+   the extra or missing event itself.
+2. **Reproduce it in isolation.** Re-run section 3's exact scenario (including the real append
+   before it), 10-12 alternating rounds. Every round was **identical**, and **repeatable**.
+3. **Rule out the file moving.** Hash the artifact at every step of the comparison. Both sides read
+   **the same bytes**; neither rewrote it.
+
+Attention therefore turned to **the check itself**. It compared events with `JSON.stringify`, and that
+string is **sensitive to key order** — while key order is not part of a session event's meaning: the
+backend's own predicate is `isDeepStrictEqual`, which ignores it. `probe:keyorder` proves the
+mechanism: two events differing **only in key order** are equal to the deep predicate and different to
+stringify.
+
+The fix was to **tighten** the comparison, not loosen it: on a torn tail the plugin does no recovery
+at all — it refuses the fast path and hands the same bytes to the same pristine reader — so the two
+answers should be **byte-identical**, not merely equal as sets. The check is now a strict deep
+equality, pinned by the input hash, so a future red can only mean the answers differ, not that the
+file moved.
+
+| Aspect | before | after |
+| --- | --- | --- |
+| Comparison | `JSON.stringify` multiset (key-order sensitive) | strict deep equality (the backend's own predicate) |
+| Input pinned | no | SHA256 before and after each side's read |
+| Failure message | "differ at 1 positions" | the extra or missing event |
+| Repeatability | not checked | same bytes read twice must give the same answer |
+
+> **Honest boundary**: the failure's in-process state was not captured, so key order is **not proven**
+> to be its cause. What is proven: that check can go red for a reason unrelated to what it tests, and
+> after tightening it, 8 consecutive runs are green and 12 controlled reproductions are byte-identical.
+> That is an **evidence-backed explanation**, not a confirmed conclusion.
+
+Worth recording as a general shape: a gate can fail in three ways — **false green** (passes without
+verifying), **false red** (fails for an unrelated reason, sending you to fix code that was never
+broken), and **undiagnosable** (red with nothing to act on). This round hit all three.
+
 ## Where optimization stops
 
 This round's goal was to stop once no further optimization is confirmed possible. The conclusion
