@@ -24,13 +24,14 @@ function check(ok, label, detail) {
   else { failures += 1; console.log("  FAIL " + label + (detail === undefined ? "" : " :: " + detail)); }
 }
 
-const HOOKS = ["readStoredLog", "decodeStoredLog", "persistBatch", "persistHeader", "truncateTornTail"];
+const HOOKS = (await import("../lib/index.js")).HOOKS;
+  const HOOK_COUNT = HOOKS.length;
 const { ctx, backend } = makeBackend(".");
 
 // 1. The real backend satisfies the contract.
 {
   const { state, disposer } = makePatchedBackend(".", {}, backend);
-  check(state?.installed?.length === 5, "the real backend installs all five hooks", String(state?.installed?.length));
+  check(state?.installed?.length === HOOK_COUNT, "the real backend installs every hook", String(state?.installed?.length));
   check(Object.keys(state?.failures ?? {}).length === 0,
     "the real backend produces no contract failure", JSON.stringify(state?.failures));
   disposer();
@@ -61,7 +62,7 @@ const { ctx, backend } = makeBackend(".");
 // 3. Restoring the helper must make the same instance install again.
 {
   const { state, disposer } = makePatchedBackend(".", {}, backend);
-  check(state?.installed?.length === 5, "the same instance installs again once the helper is back",
+  check(state?.installed?.length === HOOK_COUNT, "the same instance installs again once the helper is back",
     JSON.stringify(state?.failures));
   disposer();
 }

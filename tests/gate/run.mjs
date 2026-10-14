@@ -16,7 +16,7 @@ import { readFile, writeFile, stat, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import {
-  check, cleanStage, compareLogs, listSessions, makeBackend, makePatchedBackend, nextClosedTurn,
+  check, cleanStage, compareLogs, findSession, listSessions, makeBackend, makePatchedBackend, nextClosedTurn,
   prefixEndingAtClosedTurn, release, section, sha256, stage, summary, STAGE, unfrozenIn, unlockStage,
 } from "./harness.mjs";
 
@@ -538,15 +538,15 @@ section("9. the compatibility contract holds on the installed backend");
 /* ------------------------------------------------------------------ */
 
 {
-  const { applyToService } = await import("../../lib/index.js");
-  const HOOKS = ["readStoredLog", "decodeStoredLog", "persistBatch", "persistHeader", "truncateTornTail"];
+  const { applyToService, HOOKS } = await import("../../lib/index.js");
+  const HOOK_COUNT = HOOKS.length;
   const { ctx, backend } = makeBackend(STAGE + "\\sessions");
 
   // The installed backend must satisfy the declared surface: five patch points plus
   // the three helpers the replacements call.
   {
     const { state, disposer } = makePatchedBackend(STAGE + "\\sessions", {}, backend);
-    check(state?.installed?.length === 5, "the installed backend installs all five hooks", String(state?.installed?.length));
+    check(state?.installed?.length === HOOK_COUNT, "the installed backend installs every hook", String(state?.installed?.length));
     check(Object.keys(state?.failures ?? {}).length === 0, "the installed backend meets the declared contract",
       JSON.stringify(state?.failures));
     disposer();
@@ -578,14 +578,188 @@ section("9. the compatibility contract holds on the installed backend");
   // was caused by the removal and not by a second attach being impossible.
   {
     const { state, disposer } = makePatchedBackend(STAGE + "\\sessions", {}, backend);
-    check(state?.installed?.length === 5, "the instance installs once the helper is restored", JSON.stringify(state?.failures));
+    check(state?.installed?.length === HOOK_COUNT, "the instance installs once the helper is restored", JSON.stringify(state?.failures));
     disposer();
   }
   check(HOOKS.every((key) => !Object.hasOwn(backend, key)), "the instance is pristine after the contract checks");
 }
 
 /* ------------------------------------------------------------------ */
-section("10. the vendored backend is still untouched");
+/* fixtures shared by the cold-path and history sections                */
+/* ------------------------------------------------------------------ */
+
+// Two real artifacts, chosen by size so a decode comparison has enough frames to be meaningful
+// and the staging cost stays bounded. Both are selected once and reused by sections 10 and 11.
+const coldFixtures = (await listSessions())
+  .filter((entry) => entry.torn !== true)
+  .sort((left, right) => right.bytes - left.bytes);
+const largeFixture = (coldFixtures.find((entry) => entry.bytes > 8 * 1048576 && entry.bytes < 40 * 1048576)
+  ?? coldFixtures[0])?.id;
+const secondFixture = (coldFixtures.find((entry) => entry.id !== largeFixture && entry.bytes > 4 * 1048576)
+  ?? coldFixtures.find((entry) => entry.id !== largeFixture))?.id;
+check(largeFixture !== undefined && secondFixture !== undefined,
+  "two usable fixtures were found for the cold-path and history sections",
+  String(largeFixture) + ", " + String(secondFixture));
+
+/** Compare two session lists by the header fields, ignoring revision and size. */
+const deepEqualIds = (left, right) => {
+  const shape = (list) => list
+    .map((entry) => [String(entry.header?.id), String(entry.header?.createdAt), String(entry.header?.cwd)])
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  return JSON.stringify(shape(left)) === JSON.stringify(shape(right));
+};
+
+/* ------------------------------------------------------------------ */
+section("10. the cold path is not slower than the backend it replaces");
+/* ------------------------------------------------------------------ */
+
+{
+  const { createZstdFrameDecoder, decodeFrames, scanZstdFrames, zstdFrameDecoderKind } = await import("../../lib/pristine.js");
+  const { createZstdDecompress, zstdDecompressSync } = await import("node:zlib");
+  const { readFile } = await import("node:fs/promises");
+
+  // The decoder must select the same implementation upstream does. Upstream's line is
+  // `NodePrivateZstdFrameDecoder.create() ?? new PublicZstdFrameDecoder()`; a port that took
+  // only the fallback was measured 1.48x SLOWER than pristine on a cold open.
+  const privateUsable = (() => {
+    const stream = createZstdDecompress({ chunkSize: 1024 * 1024 });
+    const handle = stream._handle;
+    const errorKey = Reflect.ownKeys(stream).find((k) => typeof k === "symbol" && k.description === "kError");
+    const ok = typeof handle?.writeSync === "function"
+      && stream._writeState instanceof Uint32Array && stream._writeState.length >= 2
+      && typeof stream._defaultFlushFlag === "number"
+      && errorKey !== undefined && stream[errorKey] === null;
+    stream.close();
+    return ok;
+  })();
+  const chosen = createZstdFrameDecoder();
+  check(typeof chosen?.decode === "function" && typeof chosen?.close === "function",
+    "a frame decoder is created (private shape " + (privateUsable ? "available on this Node" : "unavailable") + ")");
+  chosen.close();
+
+  // THE PRIMARY CHECK, and it asserts a FACT rather than an inference.
+  //
+  // The first version of this only compared the selected decoder's speed against the public
+  // one. Forcing the public path then made both sides the same code, so they compared equal and
+  // the check passed while the optimization was absent -- a fake-green gate, caught by injecting
+  // the fault and watching it stay green. Asking the plugin which decoder it selected cannot be
+  // satisfied by a fallback, so this is the assertion the speed measurement is paired with.
+  const kind = zstdFrameDecoderKind();
+  check(privateUsable ? kind === "private" : kind === "public",
+    "the decoder selection matches what this runtime supports",
+    "runtime " + process.version + " privateUsable=" + privateUsable + " selected=" + kind);
+
+  // The cold decode must be byte-identical to the one-shot API, frame for frame. This is the
+  // correctness half: a private-contract decoder that returns different bytes would corrupt
+  // every session.
+  const fixture = await findSession(largeFixture);
+  const raw = await readFile(fixture.path);
+  // Sample size matters here and the first version got it wrong. Comparing 400 frames, two
+  // measurements of the SAME decoder differed by 20% (66 ms vs 55 ms) -- enough to turn the
+  // "not slower" check red with no real difference present. A check whose red can be noise is
+  // worse than no check. Four thousand frames puts the real ~2x gap far outside that band.
+  const frames = scanZstdFrames(raw).frames.slice(1, 4001);
+  const mine = decodeFrames(raw, frames);
+  let mismatches = 0;
+  for (let i = 0; i < frames.length; i += 1) {
+    if (!mine[i].equals(zstdDecompressSync(raw.subarray(frames[i].start, frames[i].end)))) mismatches += 1;
+  }
+  check(mismatches === 0, "the cold decoder is byte-identical to the one-shot API on " + frames.length + " frames",
+    "mismatches " + mismatches);
+  release(mine);
+
+  // Decode speed, interleaved with gc forced between arms so allocation pressure cannot
+  // masquerade as a decoder difference. The first version of this comparison omitted that and
+  // reported the reused-context decoder as 0.72x when it is 2.07x.
+  const settle = () => globalThis.gc?.();
+  const timePublic = () => {
+    settle();
+    const t0 = performance.now();
+    let n = 0;
+    for (const f of frames) n += zstdDecompressSync(raw.subarray(f.start, f.end)).length;
+    return { ms: performance.now() - t0, n };
+  };
+  const timeSelected = () => {
+    settle();
+    const d = createZstdFrameDecoder();
+    const t0 = performance.now();
+    let n = 0;
+    for (const p of d.decode(raw, frames)) n += p.length;
+    const ms = performance.now() - t0;
+    d.close();
+    return { ms, n };
+  };
+  // Interleaved rounds with gc forced, so a warm-up or an allocation pause cannot be read as
+  // a decoder difference -- the same control that resolved the 2.07x-vs-0.72x contradiction.
+  const pub = [];
+  const sel = [];
+  for (let round = 0; round < 5; round += 1) {
+    const first = timePublic();
+    const second = timeSelected();
+    pub.push(first.ms);
+    sel.push(second.ms);
+    if (round === 0) {
+      check(second.n === first.n, "both decoders produced the same total plaintext bytes",
+        second.n + " vs " + first.n);
+    }
+  }
+  const medOf = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
+  const pubMs = medOf(pub);
+  const selMs = medOf(sel);
+  if (privateUsable) {
+    // A bounded allowance rather than a strict inequality: the point is to catch a decoder
+    // that fell back to the slow public path (a ~2x gap), not to fail on scheduler noise.
+    check(selMs <= pubMs * 1.25, "the selected decoder is not slower than the public fallback",
+      "selected " + selMs.toFixed(0) + " ms vs public " + pubMs.toFixed(0) + " ms on " + frames.length +
+      " frames (" + (pubMs / selMs).toFixed(2) + "x, rounds " + sel.map((v) => v.toFixed(0)).join("/") + ")");
+  } else {
+    check(true, "private shape unavailable; the public fallback is the correct selection here");
+  }
+}
+
+/* ------------------------------------------------------------------ */
+section("11. history enumeration: the header cache hits, and cannot go stale");
+/* ------------------------------------------------------------------ */
+
+{
+  const { backend, disposer } = makePatchedBackend(STAGE + "\\sessions", {});
+  const ownership = backend[Symbol.for("dsh.coldread-cache.ownership")];
+  const headers = ownership?.headers;
+  check(headers !== undefined, "the header cache is exposed for inspection");
+
+  // A staged corpus of two real artifacts, so hits and identity are both exercised.
+  await stage(largeFixture, STAGE);
+  await stage(secondFixture, STAGE);
+  const first = await backend.list({});
+  const second = await backend.list({});
+  check(second.length === first.length && first.length >= 2,
+    "the staged corpus lists its sessions", String(first.length));
+  check(headers.hits > 0, "a repeated list is served from the header cache", String(headers.hits) + " hits");
+  check(deepEqualIds(first, second), "the cached list matches the uncached one session for session");
+
+  // Fault injection: corrupt one artifact and require it to stop being listed. A cache that
+  // ignored the file identity would keep serving the header it already had.
+  const victim = second[0];
+  const victimPath = await backend.findLog(victim.header.id).then((s) => s?.sourcePath);
+  if (victimPath !== undefined) {
+    const saved = await readFile(victimPath);
+    await writeFile(victimPath, Buffer.from("not a zstd frame at all"));
+    const afterCorruption = await backend.list({});
+    check(afterCorruption.length === second.length - 1,
+      "a corrupted artifact is dropped from the list (the cache did not serve a stale header)",
+      "listed " + afterCorruption.length + " of " + second.length);
+    await writeFile(victimPath, saved);
+    const restored = await backend.list({});
+    check(restored.length === second.length, "restoring the artifact restores the listing",
+      String(restored.length));
+  } else {
+    check(false, "the corrupted-artifact injection could find its target path");
+  }
+  disposer();
+}
+
+/* ------------------------------------------------------------------ */
+section("12. the vendored backend is still untouched");
 /* ------------------------------------------------------------------ */
 
 const after = [];

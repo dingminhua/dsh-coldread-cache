@@ -36,6 +36,7 @@ const Cordis = cordisModule.default ?? cordisModule;
 const jsonlModule = await load("@deepseek-ai/dsh-session-persistence-jsonl");
 const JsonlSessionPersistence = jsonlModule.default ?? jsonlModule.JsonlSessionPersistence;
 const plugin = await import("../lib/index.js");
+const HOOK_COUNT = plugin.HOOKS.length;
 
 const SESSIONS = process.env.DSH_SESSIONS ?? (process.env.DSH_HOME ? process.env.DSH_HOME + "\\sessions" : "");
 const STAGE = process.argv[3] ?? join(process.cwd(), ".stage-compat");
@@ -174,7 +175,7 @@ for (const spec of [
   const state = backend[Symbol.for("dsh.coldread-cache.ownership")];
   check(state !== undefined, "the plugin installed an ownership record");
   const installed = state?.status?.installed ?? [];
-  check(installed.length === 5, "all five hooks installed, not a partial patch", installed.join(","));
+  check(installed.length === HOOK_COUNT, "every hook is installed, not a partial patch", installed.join(","));
 
   const cache = state.cache;
   const writer = await backend.open(sessionId, "write");

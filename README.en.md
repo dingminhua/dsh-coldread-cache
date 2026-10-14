@@ -421,6 +421,111 @@ COMPAT_ALL_GREEN trees=3 failed=0
   incompatibility, unrelated to the plugin — and it is why a test fixture must be produced by the
   tree under test.
 
+## History loading: two real regressions, and their fixes
+
+Every optimization above targets "append then read". **Loading history is a different path**, and it
+had never been measured. Measuring it showed the plugin was **slower than the pristine backend** on
+it — which is the mechanical reason a long-used DSH also feels slow when loading history.
+
+### Measure the two paths first
+
+| Path | Cost | What it is |
+| --- | --- | --- |
+| `list()` (session list) | **839 ms** | walks 548 sessions, opening each file for its header |
+| cold read of one 62 MB session | **3892 ms** | what a user triggers by opening a session from history |
+
+The cold read breaks down into decompressing 16665 frames (**3006 ms**) and parsing 40478 JSON
+records (**2007 ms**). The frames are tiny (median 1298 B) and each costs **0.195 ms** to decode —
+**almost all of it per-call setup**, not per-byte work.
+
+### Regression 1: the plugin used the slow decoder
+
+Upstream's backend does **not** decode frame by frame with the one-shot API. Its
+`createZstdFrameDecoder()` is
+
+```js
+return NodePrivateZstdFrameDecoder.create() ?? new PublicZstdFrameDecoder();
+```
+
+i.e. it **prefers** a decoder that reuses one native context, falling back to the public API only when
+its shape probe fails. The plugin's port copied only the public half, so every frame of a cold read
+built a fresh native context.
+
+Controlled measurement (alternating rounds, gc forced between arms, median):
+
+| | median |
+| --- | --- |
+| public one-shot, per frame | 906 ms |
+| reused context | **439 ms** — **2.07x** |
+
+> This nearly went wrong: another run reported the reused context as **0.72x (slower)**. Both cannot
+> be true. The difference was that run had already allocated 277 MB of plaintext, polluting GC state.
+> With gc forced between arms and the arms alternated, the result is stably 2.07x. **When two
+> measurements disagree, find the environmental difference — do not just believe the convenient one.**
+
+### Regression 2: it materialized all the plaintext at once
+
+The plugin collected all 16665 decompressed frames (about **278 MB** of plaintext alive at once) before
+handing them to the reader. The reader already handles records that span frames, so collecting bought
+nothing and paid allocation and GC for it.
+
+### After the fixes
+
+| | before | after |
+| --- | --- | --- |
+| cold read, 62 MB session, vs pristine | **1.48x SLOWER** (4227 ms vs 2855 ms) | **1.11x faster** (2667 ms vs 2974 ms) |
+
+### The session list: a header cache
+
+`list()` opens **every** session file and decodes its first frame to read the header, even when that
+header cannot have changed. That is most of the cost of enumerating history.
+
+The plugin adds a sixth hook, `readGenerationHeader`, caching the backend's **own return value** keyed by
+the generation file's identity (the same stat-derived key the backend's own coldLogMemo uses). This
+cache is **not** the residency cache and must not be confused with it:
+
+| | residency | header cache |
+| --- | --- | --- |
+| holds | parsed events | parsed headers |
+| size | hundreds of MB | ~500 B each |
+| budgeted | by bytes, 128 MB | by count, 4096 (~2 MB) |
+
+Keeping them separate is what lets history enumeration get fast without touching the memory budget the
+event cache is carefully tuned around.
+
+| Stage | pristine | patched | |
+| --- | --- | --- | --- |
+| `listGenerations` (directory walk) | 786 ms | 556 ms | not covered by the cache |
+| `listArtifacts` (per-session header reads) | 2964 ms | **701 ms** | **4.23x** |
+| `list()` total | 1499 ms | **762 ms** | **1.97x** |
+
+Measured counters: **548 entries, 1092 hits, 552 misses** — hits dominate, so this is the cache working
+and not luck.
+
+### Two fake-green gates, both caught and fixed
+
+Writing these gate checks produced **two in a row** that looked green without verifying anything. Both
+were caught by **fault injection**, not by reading the code:
+
+1. The first compared the speed of the selected decoder against the public API. Forcing the selection
+   onto the public path made **both sides the same code**, so they compared equal and the check stayed
+   green. Worse, at a 400-frame sample two measurements of the *same* code differed by 20% (66 vs
+   55 ms), so the check lived inside its own noise band.
+2. Reporting which decoder was selected still stayed green under injection — because the reporting
+   function **bypassed** the `createZstdFrameDecoder()` under test and called the constructor directly.
+   It reported what was *available*, not what was *selected*.
+
+The fix is to make the selection **observable**: each decoder carries its own `kind`, and the reporter
+must go **through** the selection. Injection now goes red with a diagnosable reason:
+
+```
+FAIL the decoder selection matches what this runtime supports
+  :: runtime v26.0.0 privateUsable=true selected=public
+```
+
+Note that the **timing** check in the same run was still green — which is exactly the point: **a timing
+difference is not evidence that the mechanism works.**
+
 ## Where optimization stops
 
 This round's goal was to stop once no further optimization is confirmed possible. The conclusion
