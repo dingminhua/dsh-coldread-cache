@@ -13,7 +13,7 @@
  * Run: node --expose-gc tests/probe-history-path.mjs
  */
 import { performance } from "node:perf_hooks";
-import { cleanStage, listSessions, makeBackend, makePatchedBackend, release, STAGE } from "./gate/harness.mjs";
+import { SESSIONS, STAGE, cleanStage, listSessions, makeBackend, makePatchedBackend, release } from "./gate/harness.mjs";
 
 await cleanStage();
 const all = await listSessions();
@@ -22,7 +22,7 @@ console.log("corpus: " + all.length + " artifacts, " + (all.reduce((s, e) => s +
 // ------------------------------------------------------------------ list()
 // Over the real root: this is exactly what a host does when it paints the session list.
 {
-  const { backend } = makeBackend("D:\\DSHHome\\sessions");
+  const { backend } = makeBackend(SESSIONS);
   // Warm the directory enumeration so the first run is not measuring cold NTFS metadata.
   await backend.list({});
   const runs = [];
@@ -44,7 +44,7 @@ console.log("corpus: " + all.length + " artifacts, " + (all.reduce((s, e) => s +
   const big = all.slice().sort((a, b) => b.bytes - a.bytes).find((e) => e.bytes > 20 * 1048576 && e.bytes < 70 * 1048576 && !e.torn);
   console.log("");
   console.log("  opening " + big.id.slice(0, 20) + " (" + (big.bytes / 1048576).toFixed(0) + " MB)");
-  const { backend, cache, disposer } = makePatchedBackend("D:\\DSHHome\\sessions", {});
+  const { backend, cache, disposer } = makePatchedBackend(SESSIONS, {});
   const t0 = performance.now();
   const first = await backend.requireStoredLog(big.id, undefined);
   const cold = performance.now() - t0;

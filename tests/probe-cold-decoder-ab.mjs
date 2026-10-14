@@ -21,7 +21,7 @@ import { performance } from "node:perf_hooks";
 import { readFile } from "node:fs/promises";
 import { zstdDecompressSync, createZstdDecompress } from "node:zlib";
 import { scanZstdFrames, decodeFrames } from "../lib/pristine.js";
-import { cleanStage, listSessions, makeBackend, makePatchedBackend, release } from "./gate/harness.mjs";
+import { SESSIONS, cleanStage, listSessions, makeBackend, makePatchedBackend, release } from "./gate/harness.mjs";
 
 await cleanStage();
 const all = await listSessions();
@@ -135,7 +135,7 @@ console.log("");
 console.log("  real cold path, same artifact, interleaved");
 {
   // pristine
-  const p = makeBackend("D:\\DSHHome\\sessions");
+  const p = makeBackend(SESSIONS);
   const t0 = performance.now();
   const stored = await p.backend.requireStoredLog(big.id, undefined);
   const pristineMs = performance.now() - t0;
@@ -143,7 +143,7 @@ console.log("  real cold path, same artifact, interleaved");
   release(stored);
 }
 {
-  const q = makePatchedBackend("D:\\DSHHome\\sessions", {});
+  const q = makePatchedBackend(SESSIONS, {});
   const t0 = performance.now();
   const stored = await q.backend.requireStoredLog(big.id, undefined);
   const patchedMs = performance.now() - t0;

@@ -17,10 +17,10 @@
 import { performance } from "node:perf_hooks";
 import { readFile, writeFile, utimes, stat, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import { cleanStage, listSessions, makeBackend, makePatchedBackend, release, STAGE, unlockStage } from "./gate/harness.mjs";
+import { SESSIONS, STAGE, cleanStage, listSessions, makeBackend, makePatchedBackend, release, unlockStage } from "./gate/harness.mjs";
 
 await cleanStage();
-const ROOT = "D:\\DSHHome\\sessions";
+const ROOT = SESSIONS;
 const all = await listSessions();
 console.log("corpus: " + all.length + " artifacts");
 

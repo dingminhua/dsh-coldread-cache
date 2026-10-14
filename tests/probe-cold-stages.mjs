@@ -22,7 +22,7 @@ import { readFile } from "node:fs/promises";
 import { scanZstdFrames, decompressZstdFrameSync } from "../lib/pristine.js";
 import { assertReleasedV4Relationships } from "@deepseek-ai/dsh-session-format-v3-to-v4";
 import { KNOWN_SESSION_EVENT_TYPES } from "@deepseek-ai/dsh-session";
-import { cleanStage, listSessions, makePatchedBackend, release } from "./gate/harness.mjs";
+import { SESSIONS, cleanStage, listSessions, makePatchedBackend, release } from "./gate/harness.mjs";
 
 await cleanStage();
 const all = await listSessions();
@@ -34,7 +34,7 @@ console.log("fixture: " + big.id.slice(0, 24) + "  " + (big.bytes / 1048576).toF
 let realCold;
 let entry;
 {
-  const { backend, cache, disposer } = makePatchedBackend("D:\\DSHHome\\sessions", {});
+  const { backend, cache, disposer } = makePatchedBackend(SESSIONS, {});
   const t0 = performance.now();
   await backend.requireStoredLog(big.id, undefined);
   realCold = performance.now() - t0;

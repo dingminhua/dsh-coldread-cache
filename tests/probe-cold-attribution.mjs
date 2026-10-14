@@ -24,7 +24,7 @@ import { performance } from "node:perf_hooks";
 import { readFile } from "node:fs/promises";
 import { createZstdDecompress } from "node:zlib";
 import { scanZstdFrames, decodeFrames, LiveLogReader, assertZstdHeaderFrame } from "../lib/pristine.js";
-import { cleanStage, listSessions, makePatchedBackend, release } from "./gate/harness.mjs";
+import { SESSIONS, cleanStage, listSessions, makePatchedBackend, release } from "./gate/harness.mjs";
 
 await cleanStage();
 const all = await listSessions();
@@ -142,7 +142,7 @@ console.log("    " + "feed: one concatenated write".padEnd(52) + feedConcatMs.to
 // ---- control: the real cold read, for the total to be judged against
 console.log("");
 {
-  const q = makePatchedBackend("D:\\DSHHome\\sessions", {});
+  const q = makePatchedBackend(SESSIONS, {});
   const t0 = performance.now();
   const stored = await q.backend.requireStoredLog(big.id, undefined);
   console.log("    real patched cold requireStoredLog".padEnd(52) + (performance.now() - t0).toFixed(0).padStart(7) + " ms   events " + stored.events.length);

@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-const dir = "D:/WishProject/dsh-coldread-cache/.prof";
+const dir = process.argv[2] ?? ".prof";
 const file = readdirSync(dir).filter((f) => f.endsWith(".cpuprofile")).pop();
 const profile = JSON.parse(readFileSync(dir + "/" + file, "utf8"));
 const byId = new Map(profile.nodes.map((n) => [n.id, n]));

@@ -14,10 +14,10 @@
  * Run: node --expose-gc --max-old-space-size=12288 tests/probe-list-stages.mjs
  */
 import { performance } from "node:perf_hooks";
-import { cleanStage, listSessions, makeBackend, makePatchedBackend } from "./gate/harness.mjs";
+import { SESSIONS, cleanStage, listSessions, makeBackend, makePatchedBackend } from "./gate/harness.mjs";
 
 await cleanStage();
-const ROOT = "D:\\DSHHome\\sessions";
+const ROOT = SESSIONS;
 const all = await listSessions();
 console.log("corpus: " + all.length + " artifacts");
 

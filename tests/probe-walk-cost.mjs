@@ -11,10 +11,10 @@
 import { performance } from "node:perf_hooks";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { cleanStage, makeBackend, makePatchedBackend } from "./gate/harness.mjs";
+import { SESSIONS, cleanStage, makeBackend, makePatchedBackend } from "./gate/harness.mjs";
 
 await cleanStage();
-const ROOT = "D:\\DSHHome\\sessions";
+const ROOT = SESSIONS;
 const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
 const pct = (a, p) => a.slice().sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(a.length * p))];
 
