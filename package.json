@@ -39,6 +39,7 @@
     "probe:torn": "node --expose-gc --max-old-space-size=12288 tests/probe-torn-tail.mjs",
     "probe:mutation": "node --expose-gc --max-old-space-size=12288 tests/probe-torn-mutation.mjs",
     "probe:keyorder": "node tests/probe-key-order.mjs",
+    "probe:walk": "node --expose-gc --max-old-space-size=8192 tests/probe-walk-cost.mjs",
     "probe:history": "node --expose-gc --max-old-space-size=12288 tests/probe-history-path.mjs",
     "probe:liststages": "node --expose-gc --max-old-space-size=12288 tests/probe-list-stages.mjs",
     "probe:cold": "node --expose-gc --max-old-space-size=12288 tests/probe-cold-decoder-ab.mjs",

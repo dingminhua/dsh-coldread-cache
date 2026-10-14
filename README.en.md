@@ -570,6 +570,48 @@ Worth recording as a general shape: a gate can fail in three ways — **false gr
 verifying), **false red** (fails for an unrelated reason, sending you to fix code that was never
 broken), and **undiagnosable** (red with nothing to act on). This round hit all three.
 
+
+### Is there more to optimize? The remaining time is outside the plugin
+
+After the header cache, what remains in `list()` is mostly `listGenerations` -- the **directory
+walk**. The plugin does **not** replace it: none of its six hooks (`readStoredLog`,
+`decodeStoredLog`, `persistBatch`, `persistHeader`, `truncateTornTail`, `readGenerationHeader`) is
+that function. It is the backend's own code.
+
+Could the whole directory listing be cached? `probe:walk` measured both sides of that question:
+
+```
+content touched in place   -> dir mtime UNCHANGED   (legitimate: content changed, path list did not)
+file created               -> dir mtime CHANGED
+file removed               -> dir mtime CHANGED
+
+=> but it saves nothing: validating needs 575 stats (135 ms) to skip 575 readdirs (168 ms)
+```
+
+So a directory-mtime-keyed listing cache **would be safe** (a content change does not alter the path
+list), but **deciding whether it is still valid costs the same order of work as what it would skip** --
+one syscall per session either way. This is not "hard to do"; it is **not worth doing**.
+
+> **A measurement failure that has to be written down**: an attempt to compute the walk's "syscall
+> floor" produced a floor SLOWER than the function itself (152 ms measured vs 254 ms computed). That
+> is impossible, so the floor calculation was wrong -- timing each awaited operation adds overhead that
+> pollutes the per-operation cost. The same function also ranged from 152 ms to 1692 ms across runs,
+> an order of magnitude.
+>
+> So **no precise number is claimed here**. Two things hold up: the directory walk is the remaining
+> dominant cost in `list()`, and it is not the plugin's code to replace. **No optimization without
+> evidence, and no measurement dressed up as a conclusion.**
+
+Put together, this round's stopping reason is layered:
+
+| Layer | Conclusion | Evidence |
+| --- | --- | --- |
+| cold-read decoder | fixed (2.07x private reused-context decoder) | controlled A/B + injection goes red |
+| cold-read plaintext | fixed (streaming instead of the 278 MB materialization) | cold read went 1.48x slower to 1.11x faster |
+| session-list headers | fixed (4.23x on `listArtifacts`) | counters: 548 entries / 1092 hits |
+| directory walk | **not the plugin's code**, and caching does not pay | both sides measured by `probe:walk` |
+| the released validator | 90% of extension cost and **cannot be segmented** | `probe:segments` refused by the state machine |
+
 ## Where optimization stops
 
 This round's goal was to stop once no further optimization is confirmed possible. The conclusion
