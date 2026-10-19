@@ -74,8 +74,8 @@ console.log("    " + tStat.length + " generation stats                      = " 
 console.log("    total floor                                = " + (sumReaddir + sumStat).toFixed(0) + " ms");
 console.log("");
 
-const plain = makeBackend(ROOT);
-const patched = makePatchedBackend(ROOT, {});
+const plain = await makeBackend(ROOT);
+const patched = await makePatchedBackend(ROOT, {});
 await plain.backend.listGenerations();
 await patched.backend.listGenerations();
 const runs = [];

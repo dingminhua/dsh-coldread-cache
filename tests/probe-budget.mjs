@@ -20,6 +20,7 @@ import {
   cleanStage, listSessions, makePatchedBackend, nextClosedTurn, prefixEndingAtClosedTurn, release, stage,
   STAGE, unlockStage,
 } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 await cleanStage();
 const all = await listSessions();
@@ -47,7 +48,7 @@ console.log("working set: " + working.map((e) => Math.round(e.bytes / 1048576)).
  * the ranking -- and the ranking is what decides whether a small budget is enough.
  */
 async function run(maxResidentBytes, maxEntries) {
-  const patched = makePatchedBackend(STAGE + "\\sessions", { maxResidentBytes, maxEntries });
+  const patched = await makePatchedBackend(join(STAGE, "sessions"), { maxResidentBytes, maxEntries });
   const active = staged[0];
   const bystanders = staged.slice(1);
   const writer = await patched.backend.open(active.id, "write");

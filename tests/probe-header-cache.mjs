@@ -33,7 +33,7 @@ const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
 
 // ---- 1. the counters, read from the plugin's own status document
 {
-  const { backend, state, disposer } = makePatchedBackend(ROOT, { statusFile: "" });
+  const { backend, state, disposer } = await makePatchedBackend(ROOT, { statusFile: "" });
   await backend.list({});                       // populates
   await backend.list({});                       // must hit
   await backend.list({});                       // must hit
@@ -57,12 +57,12 @@ const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
   // an artifact to the path derived from its own header, so the project directory must be
   // the one the header names -- stage() does exactly that.
   const pick = all.slice().sort((a, b) => b.bytes - a.bytes).find((e) => e.bytes > 4 * 1048576 && e.bytes < 20 * 1048576 && !e.torn);
-  const stagedRoot = STAGE + "\\sessions";
+  const stagedRoot = join(STAGE, "sessions");
   const target = join(stagedRoot, pick.project, pick.id, "session.v4.jsonl.zstd");
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, await readFile(pick.path));
 
-  const { backend, disposer } = makePatchedBackend(stagedRoot, {});
+  const { backend, disposer } = await makePatchedBackend(stagedRoot, {});
   const first = await backend.list({});
   check(first.length === 1, "the staged corpus lists one session", String(first.length));
   const firstHeader = first[0]?.header;

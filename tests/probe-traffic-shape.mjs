@@ -17,6 +17,7 @@ import {
   cleanStage, listSessions, makePatchedBackend, nextClosedTurn, prefixEndingAtClosedTurn, release, stage,
   STAGE, unlockStage,
 } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 await cleanStage();
 const all = await listSessions();
@@ -40,7 +41,7 @@ const snap = (cache) => ({ ...cache.stats });
 
 /** Shape A: the host appends and immediately reads the SAME session (the A/B model). */
 async function appendThenReadSameSession(budget) {
-  const patched = makePatchedBackend(STAGE + "\\sessions", { maxResidentBytes: budget });
+  const patched = await makePatchedBackend(join(STAGE, "sessions"), { maxResidentBytes: budget });
   const writer = await patched.backend.open(active.id, "write");
   let read = await writer.read();
   const before = snap(patched.cache);
@@ -57,7 +58,7 @@ async function appendThenReadSameSession(budget) {
 
 /** Shape B: the host appends, and reads OTHER sessions before coming back. */
 async function appendThenReadOtherSessions(budget) {
-  const patched = makePatchedBackend(STAGE + "\\sessions", { maxResidentBytes: budget });
+  const patched = await makePatchedBackend(join(STAGE, "sessions"), { maxResidentBytes: budget });
   const writer = await patched.backend.open(active.id, "write");
   let read = await writer.read();
   const before = snap(patched.cache);
@@ -79,7 +80,7 @@ async function appendThenReadOtherSessions(budget) {
 
 /** Shape C: the host only ever READS sessions; nothing is appended to. */
 async function readOnly() {
-  const patched = makePatchedBackend(STAGE + "\\sessions", { maxResidentBytes: 128 * 1048576 });
+  const patched = await makePatchedBackend(join(STAGE, "sessions"), { maxResidentBytes: 128 * 1048576 });
   const before = snap(patched.cache);
   for (let round = 0; round < 3; round += 1) {
     for (const c of cut) {

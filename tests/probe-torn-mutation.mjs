@@ -17,6 +17,7 @@ import {
   cleanStage, listSessions, makeBackend, makePatchedBackend, nextClosedTurn,
   prefixEndingAtClosedTurn, release, stage, STAGE, unlockStage,
 } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 await cleanStage();
 const { scanZstdFrames } = await import("../lib/pristine.js");
@@ -32,7 +33,7 @@ let big;
 let staged;
 for (const candidate of corpus) {
   const attempt = await stage(candidate.id);
-  const probe = makeBackend(STAGE + "\\sessions");
+  const probe = await makeBackend(join(STAGE, "sessions"));
   try {
     await probe.backend.readStoredLog(attempt.path, candidate.id, undefined);
     big = candidate;
@@ -53,9 +54,9 @@ const digest = async () => {
   return { sha: createHash("sha256").update(bytes).digest("hex").slice(0, 16), size: bytes.length, mtime: String(info.mtimeNs) };
 };
 
-const root = STAGE + "\\sessions";
-const pristine = makeBackend(root);
-const patched = makePatchedBackend(root, {});
+const root = join(STAGE, "sessions");
+const pristine = await makeBackend(root);
+const patched = await makePatchedBackend(root, {});
 
 // Section 3's exact sequence, hashing at every step.
 await writeFile(staged.path, cut.bytes);

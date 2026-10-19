@@ -1,10 +1,11 @@
 import { cleanStage, listSessions, makePatchedBackend, release, stage, STAGE, unlockStage } from "./gate/harness.mjs";
+import { join } from "node:path";
 await cleanStage();
 const all = await listSessions();
 const pick = all.filter((e) => e.bytes > 65536 && e.bytes < 4 * 1048576).slice(0, 3);
 const staged = [];
 for (const e of pick) staged.push(await stage(e.id));
-const { backend, cache, disposer } = makePatchedBackend(STAGE + "\\sessions", {});
+const { backend, cache, disposer } = await makePatchedBackend(join(STAGE, "sessions"), {});
 const log = await backend.readStoredLog(staged[0].path, pick[0].id, undefined);
 console.log("residentIds: " + JSON.stringify(cache.residentIds));
 console.log("hotIds:      " + JSON.stringify(cache.hotIds));

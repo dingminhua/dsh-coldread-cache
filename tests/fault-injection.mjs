@@ -58,7 +58,7 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
     check(false, "injection 2: a small real session is available to mutate");
   } else {
     const attempt = await stage(candidate.id);
-    const { backend } = makeBackend(STAGE + "\\sessions");
+    const { backend } = await makeBackend(join(STAGE, "sessions"));
     const truth = await backend.readStoredLog(attempt.path, candidate.id, undefined);
     check(compareLogs(truth, truth).length === 0, "injection 2a: a read equals itself");
 
@@ -80,8 +80,8 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
   if (candidate === undefined) {
     check(false, "injection 3: a small real session is available");
   } else {
-    const attempt = await stage(candidate.id, STAGE + "\\off");
-    const off = makePatchedBackend(STAGE + "\\off\\sessions", { maxResidentBytes: 1 });
+    const attempt = await stage(candidate.id, join(STAGE, "off"));
+    const off = await makePatchedBackend(join(STAGE, "off", "sessions"), { maxResidentBytes: 1 });
     if (!(await prefixEndingAtClosedTurn(attempt.path))) {
       check(false, "injection 3: a frame-aligned prefix ends at a closed turn");
     } else {

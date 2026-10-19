@@ -395,21 +395,43 @@ pnpm run probe:contract  # the contract can fail: removing a helper must be refu
 
 `compat` finds the trees itself (or takes `DSH_TREES`), and for each one: builds a session log
 **written by that tree**, attaches the plugin, appends a real batch, reads it back, and asserts
-the read was served by **extending the resident parse** rather than a cold re-decode. On this
-machine, 3 trees across 2 versions (`0.2.0-rc.2` and `0.2.1-alpha.2`) are all
-`COMPAT_GREEN checks=16`.
+the read was served by **extending the resident parse** rather than a cold re-decode.
+
+### The backend ships in two shapes, and both are supported
+
+Since `0.2.1-rc.1`, `dsh-session-persistence-jsonl` no longer exports the
+`JsonlSessionPersistence` class:
+
+| Version | Exports | How to build a backend |
+| --- | --- | --- |
+| ≤ `0.2.1-alpha.5` | `{ JsonlCompressionSchema, default }` | `new JsonlSessionPersistence(ctx, config)` |
+| ≥ `0.2.1-rc.1` | `{ Config, JsonlCompressionSchema, apply, name }` | `ctx.plugin(module, config)`, then read the instance back off `Symbol.for("cordis.original")` on the service |
+
+Once a backend is mounted, **the five patch points exist only on the live instance in both
+shapes**. The suite therefore goes through a `mountBackend()` helper that picks the shape;
+writing `new JsonlSessionPersistence(...)` directly throws
+`Cannot read properties of undefined (reading 'prototype')` on rc.1+.
+
+Measured versions and results:
+
+```
+version              backend shape   compat
+0.2.0-rc.2          class export    COMPAT_GREEN checks=16 failures=0
+0.2.1-alpha.2       class export    COMPAT_GREEN checks=16 failures=0
+0.2.1-rc.1          apply only      COMPAT_GREEN checks=16 failures=0
+0.2.1-rc.2          apply only      COMPAT_GREEN checks=16 failures=0
+```
+
+On `0.2.1-rc.2` the full gate also ran green: `GATE_GREEN checks=121 failures=0`. On a real
+9.2 MB / 12,369-event session, read-after-append went from **293.9 ms** unpatched to **8.5 ms**
+with the plugin (**34.4×**), same event count. Note that `DSH_PRISTINE_SHA` pins the hash of the
+backend package for one version; when you change trees, override it with the new tree's hash or
+section 0 reports the backend as tampered — which is the guard doing its job.
 
 The suite also uses a loader hook to redirect the plugin's **own** `@deepseek-ai` imports onto
 the tree under test. Without that step the test is really "tree A's backend driven by tree B's
 validation modules" — invisible when both trees are identical, which is exactly when it would be
 least likely to be noticed.
-
-```
-COMPAT_ALL_GREEN trees=3 failed=0
-  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.0-rc.2
-  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.1-alpha.2 (nightly)
-  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.1-alpha.2 (stable)
-```
 
 ### Two things the survey turned up
 

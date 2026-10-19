@@ -18,6 +18,7 @@
  */
 import { isDeepStrictEqual } from "node:util";
 import { compareLogs } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 let failures = 0;
 const check = (ok, label, detail) => {

@@ -24,6 +24,7 @@ import { readFile } from "node:fs/promises";
 import { createZstdDecompress, zstdDecompressSync } from "node:zlib";
 import { scanZstdFrames } from "../lib/pristine.js";
 import { SESSIONS, cleanStage, listSessions, makeBackend, makePatchedBackend, release } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 await cleanStage();
 const all = await listSessions();
@@ -134,7 +135,7 @@ const patchedMs = [];
 for (let round = 0; round < 3; round += 1) {
   settle();
   {
-    const p = makeBackend(SESSIONS);
+    const p = await makeBackend(SESSIONS);
     const t0 = performance.now();
     const s = await p.backend.requireStoredLog(big.id, undefined);
     pristineMs.push(performance.now() - t0);
@@ -142,7 +143,7 @@ for (let round = 0; round < 3; round += 1) {
   }
   settle();
   {
-    const q = makePatchedBackend(SESSIONS, {});
+    const q = await makePatchedBackend(SESSIONS, {});
     const t0 = performance.now();
     const s = await q.backend.requireStoredLog(big.id, undefined);
     patchedMs.push(performance.now() - t0);

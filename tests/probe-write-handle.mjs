@@ -17,6 +17,7 @@
  */
 import { cleanStage, listSessions, makePatchedBackend, nextClosedTurn, release, stage, STAGE, unlockStage } from "./gate/harness.mjs";
 import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 await cleanStage();
 const all = await listSessions();
@@ -28,7 +29,7 @@ const cut = await prefixEndingAtClosedTurn(staged.path);
 if (cut === undefined) { console.log("PROBE_FAIL no closed turn"); process.exit(2); }
 await writeFile(staged.path, cut.bytes);
 
-const { backend, cache, disposer } = makePatchedBackend(STAGE + "\\sessions", {});
+const { backend, cache, disposer } = await makePatchedBackend(join(STAGE, "sessions"), {});
 const snap = () => ({ hits: cache.stats.hits, ext: cache.stats.extensions, cold: cache.stats.coldParses });
 
 // A write handle, exactly as a host holds one for the session it is driving.

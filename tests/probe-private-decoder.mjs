@@ -25,6 +25,7 @@ import { createHash } from "node:crypto";
 import { createZstdDecompress, zstdDecompressSync } from "node:zlib";
 import { scanZstdFrames } from "../lib/pristine.js";
 import { listSessions } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 /* ------------------------------------------------------------------ */
 /* the candidate implementation, mirroring upstream's private contract */

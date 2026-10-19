@@ -16,6 +16,7 @@ import {
   cleanStage, listSessions, makePatchedBackend, nextClosedTurn, prefixEndingAtClosedTurn, release, stage,
   STAGE, unlockStage,
 } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 await cleanStage();
 const all = await listSessions();
@@ -32,7 +33,7 @@ for (const candidate of all) {
 if (fixture === undefined) { console.log("PROBE_FAIL no appendable fixture"); process.exit(2); }
 console.log("fixture: " + Math.round(fixture.bytes / 1048576) + " MB");
 
-const { backend, cache, disposer } = makePatchedBackend(STAGE + "\\sessions", {});
+const { backend, cache, disposer } = await makePatchedBackend(join(STAGE, "sessions"), {});
 const writer = await backend.open(fixture.id, "write");
 let read = await writer.read();
 console.log("events:  " + read.events.length);

@@ -15,6 +15,7 @@
  */
 import { performance } from "node:perf_hooks";
 import { SESSIONS, cleanStage, listSessions, makeBackend, makePatchedBackend } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 await cleanStage();
 const ROOT = SESSIONS;
@@ -38,7 +39,7 @@ async function timeStage(label, fn) {
 
 console.log("");
 console.log("  UNCACHED (pristine backend)");
-const plain = makeBackend(ROOT);
+const plain = await makeBackend(ROOT);
 await plain.backend.list({});
 console.log("    " + "stage".padEnd(34) + "runs".padEnd(30) + "        median");
 const plainGen = await timeStage("listGenerations", () => plain.backend.listGenerations());
@@ -47,7 +48,7 @@ const plainAll = await timeStage("list", () => plain.backend.list({}));
 
 console.log("");
 console.log("  CACHED (plugin attached)");
-const patched = makePatchedBackend(ROOT, {});
+const patched = await makePatchedBackend(ROOT, {});
 await patched.backend.list({});
 const patchGen = await timeStage("listGenerations", () => patched.backend.listGenerations());
 const patchArt = await timeStage("listArtifacts", () => patched.backend.listArtifacts());

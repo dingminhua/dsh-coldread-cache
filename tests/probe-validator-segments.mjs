@@ -18,6 +18,7 @@ import { performance } from "node:perf_hooks";
 import { assertReleasedV4Relationships } from "@deepseek-ai/dsh-session-format-v3-to-v4";
 import { KNOWN_SESSION_EVENT_TYPES } from "@deepseek-ai/dsh-session";
 import { cleanStage, listSessions, makePatchedBackend, release, stage, STAGE, unlockStage } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 await cleanStage();
 const all = await listSessions();
@@ -25,7 +26,7 @@ const big = all.find((e) => e.bytes > 8 * 1048576 && e.bytes < 60 * 1048576);
 if (big === undefined) { console.log("PROBE_FAIL no fixture"); process.exit(2); }
 const staged = await stage(big.id);
 
-const { backend, cache, disposer } = makePatchedBackend(STAGE + "\\sessions", {});
+const { backend, cache, disposer } = await makePatchedBackend(join(STAGE, "sessions"), {});
 const log = await backend.readStoredLog(staged.path, big.id, undefined);
 const entry = cache.get(big.id);
 const events = entry.events;

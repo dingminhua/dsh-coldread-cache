@@ -142,7 +142,7 @@ console.log("    " + "feed: one concatenated write".padEnd(52) + feedConcatMs.to
 // ---- control: the real cold read, for the total to be judged against
 console.log("");
 {
-  const q = makePatchedBackend(SESSIONS, {});
+  const q = await makePatchedBackend(SESSIONS, {});
   const t0 = performance.now();
   const stored = await q.backend.requireStoredLog(big.id, undefined);
   console.log("    real patched cold requireStoredLog".padEnd(52) + (performance.now() - t0).toFixed(0).padStart(7) + " ms   events " + stored.events.length);

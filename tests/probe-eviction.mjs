@@ -13,6 +13,7 @@
  * Run: node --expose-gc tests/probe-eviction.mjs
  */
 import { cleanStage, listSessions, makePatchedBackend, nextClosedTurn, release, stage, STAGE, unlockStage } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 await cleanStage();
 const all = await listSessions();
@@ -24,7 +25,7 @@ const attempt = await stage(active.id);
 const staged = [];
 for (const b of bystanders) staged.push(await stage(b.id));
 
-const { backend, cache, disposer } = makePatchedBackend(STAGE + "\\sessions", { maxEntries: 4, maxResidentBytes: 32 * 1048576 });
+const { backend, cache, disposer } = await makePatchedBackend(join(STAGE, "sessions"), { maxEntries: 4, maxResidentBytes: 32 * 1048576 });
 console.log("active " + active.id.slice(0, 13) + ", " + staged.length + " bystanders, maxEntries=4");
 
 const writer = await backend.open(active.id, "write");

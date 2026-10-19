@@ -9,6 +9,7 @@
  * Run: node --expose-gc tests/probe-heap.mjs
  */
 import { cleanStage, listSessions, makeBackend, makePatchedBackend, release, stage, STAGE, unlockStage } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 const mb = (bytes) => (bytes / 1048576).toFixed(0) + "MB";
 const settle = async () => {
@@ -28,7 +29,7 @@ for (const entry of pick) staged.push(await stage(entry.id));
 /* ---- pristine: the two-entry memo the backend already keeps ------------- */
 let base = await settle();
 console.log("\nbaseline:                        " + mb(base));
-const pristine = makeBackend(STAGE + "\\sessions");
+const pristine = await makeBackend(join(STAGE, "sessions"));
 for (let i = 0; i < staged.length; i += 1) {
   const log = await pristine.backend.readStoredLog(staged[i].path, pick[i].id, undefined);
   const now = await settle();
@@ -41,7 +42,7 @@ await settle();
 
 /* ---- plugin: the same artifacts, held by its own residency ------------- */
 base = await settle();
-const patched = makePatchedBackend(STAGE + "\\sessions", { maxEntries: 8 });
+const patched = await makePatchedBackend(join(STAGE, "sessions"), { maxEntries: 8 });
 for (let i = 0; i < staged.length; i += 1) {
   const log = await patched.backend.readStoredLog(staged[i].path, pick[i].id, undefined);
   const now = await settle();

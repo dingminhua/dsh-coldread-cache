@@ -2,14 +2,23 @@
  * Multi-version compatibility: run the plugin against a DIFFERENT installed DSH.
  *
  * The plugin statically imports seven @deepseek-ai packages and patches five methods
- * on the jsonl backend. Two DSH installs exist on this machine (0.2.0-rc.2 and
- * 0.2.1-alpha.2), and the plugin resolves its imports through whatever tree the host
+ * on the jsonl backend. The plugin resolves its imports through whatever tree the host
  * provides -- so "compatible" has to mean "works against that tree", not "works
  * against the one I developed on".
  *
  * This harness points module resolution at a chosen tree, attaches the plugin to that
  * tree's real backend, and drives a real append-then-read cycle over a real artifact.
  * A version whose backend shape moved fails here rather than in a user's host.
+ *
+ * Two backend shapes exist and BOTH are supported:
+ *   - up to 0.2.1-alpha.5: the package exports the `JsonlSessionPersistence` class,
+ *     so a backend is built with `new JsonlSessionPersistence(ctx, config)`.
+ *   - from 0.2.1-rc.1: the package exports only `{ Config, JsonlCompressionSchema,
+ *     apply, name }` and constructs its backend inside `apply`. There is no class to
+ *     instantiate and no default export, so a backend has to be mounted on a context
+ *     and read back off the service, and the patch points can only be inspected on a
+ *     live instance. Assuming the class exists is what made this harness crash with
+ *     "Cannot read properties of undefined (reading 'prototype')" against rc.1+.
  *
  * Usage: node tests/compat.mjs <path-to-@deepseek-ai> [stageRoot]
  */
@@ -34,13 +43,36 @@ const load = async (spec) => import(pathToFileURL(resolveIn(spec)).href);
 const cordisModule = await load("@deepseek-ai/cordis");
 const Cordis = cordisModule.default ?? cordisModule;
 const jsonlModule = await load("@deepseek-ai/dsh-session-persistence-jsonl");
-const JsonlSessionPersistence = jsonlModule.default ?? jsonlModule.JsonlSessionPersistence;
 const plugin = await import("../lib/index.js");
 const HOOK_COUNT = plugin.HOOKS.length;
 
-const SESSIONS = process.env.DSH_SESSIONS ?? (process.env.DSH_HOME ? process.env.DSH_HOME + "\\sessions" : "");
+// The two backends this plugin depends on may be reached two ways, and picking the
+// wrong one is silent until something dereferences undefined.
+const JsonlSessionPersistence = jsonlModule.default ?? jsonlModule.JsonlSessionPersistence;
+const mountsViaApply = typeof jsonlModule.apply === "function" && JsonlSessionPersistence === undefined;
+
+/** The five methods the plugin patches. Inspected on a LIVE backend, not a prototype. */
+const PATCH_POINTS = ["readStoredLog", "decodeStoredLog", "persistBatch", "persistHeader", "truncateTornTail"];
+
+/**
+ * Mount this tree's jsonl backend on `ctx` and return the real instance.
+ *
+ * The plugin needs the UNPATCHED backend (`Symbol.for("cordis.original")`) so it can
+ * wrap the live methods and still delegate. Both shapes expose it once mounted, but
+ * only the class shape lets us skip mounting entirely.
+ */
+async function mountBackend(ctx, config) {
+  if (!mountsViaApply) return new JsonlSessionPersistence(ctx, config);
+  await ctx.plugin(jsonlModule, config);
+  const service = ctx.get("sessionPersistence");
+  const real = service?.[Symbol.for("cordis.original")];
+  if (real === undefined) throw new Error("this tree mounted a backend but exposed no cordis.original to patch");
+  return real;
+}
+
+const SESSIONS = process.env.DSH_SESSIONS ?? (process.env.DSH_HOME ? join(process.env.DSH_HOME, "sessions") : "");
 const STAGE = process.argv[3] ?? join(process.cwd(), ".stage-compat");
-const ROOT = STAGE + "\\sessions";
+const ROOT = join(STAGE, "sessions");
 
 let failures = 0;
 let checks = 0;
@@ -101,10 +133,28 @@ for (const spec of [
 }
 
 // 2. the backend must expose all five patch points as functions.
+//
+// From 0.2.1-rc.1 the backend class is no longer exported, so there is no prototype to
+// inspect; the methods only exist on a mounted instance. Mounting here (rather than
+// silently skipping) keeps this a real check on every tree: an rc.1+ tree that renamed
+// a patch point still fails, and the instance is reused by step 3 so nothing is mounted
+// twice. `patchTarget` stays undefined only when the tree has no usable backend at all,
+// which step 3 then reports.
+let patchTarget;
 {
-  const missing = ["readStoredLog", "decodeStoredLog", "persistBatch", "persistHeader", "truncateTornTail"]
-    .filter((k) => typeof JsonlSessionPersistence.prototype[k] !== "function");
-  check(missing.length === 0, "all five patch points are functions on the backend prototype", missing.join(", "));
+  const probeCtx = new Cordis.Context();
+  probeCtx.logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+  try {
+    patchTarget = await mountBackend(probeCtx, { root: join(STAGE, "probe"), compression: "zstd" });
+  } catch (error) {
+    check(false, "this tree's backend can be mounted", String(error));
+  }
+  if (patchTarget !== undefined) {
+    const missing = PATCH_POINTS.filter((k) => typeof patchTarget[k] !== "function");
+    check(missing.length === 0,
+      mountsViaApply ? "all five patch points are functions on the mounted backend" : "all five patch points are functions on the backend prototype",
+      missing.join(", "));
+  }
 }
 
 // 3. attach the plugin to THIS tree's backend and drive a real cycle.
@@ -126,7 +176,7 @@ for (const spec of [
   // before the plugin's backend is constructed on the parent.
   const seedCtx = new Cordis.Context();
   seedCtx.logger = ctx.logger;
-  const seed = new JsonlSessionPersistence(seedCtx, { root: ROOT, compression: "zstd" });
+  const seed = await mountBackend(seedCtx, { root: ROOT, compression: "zstd" });
   // create() takes a full session header, not a project descriptor. The two trees
   // agree on the required shape here (id, createdAt as a non-negative safe integer,
   // isSeeded), which is why building it explicitly works on both.
@@ -168,7 +218,7 @@ for (const spec of [
   // sessionPersistence service on the parent context.
   await seedCtx.stop?.();
 
-  const backend = new JsonlSessionPersistence(ctx, { root: ROOT, compression: "zstd" });
+  const backend = await mountBackend(ctx, { root: ROOT, compression: "zstd" });
   const service = { [Symbol.for("cordis.original")]: backend };
   const disposer = plugin.applyToService(ctx, service, {});
   check(disposer !== undefined, "the plugin attaches to this tree's backend");

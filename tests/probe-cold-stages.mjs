@@ -34,7 +34,7 @@ console.log("fixture: " + big.id.slice(0, 24) + "  " + (big.bytes / 1048576).toF
 let realCold;
 let entry;
 {
-  const { backend, cache, disposer } = makePatchedBackend(SESSIONS, {});
+  const { backend, cache, disposer } = await makePatchedBackend(SESSIONS, {});
   const t0 = performance.now();
   await backend.requireStoredLog(big.id, undefined);
   realCold = performance.now() - t0;

@@ -19,6 +19,7 @@ import {
   check, cleanStage, compareLogs, findSession, listSessions, makeBackend, makePatchedBackend, nextClosedTurn,
   prefixEndingAtClosedTurn, release, section, sha256, stage, summary, STAGE, unfrozenIn, unlockStage,
 } from "./harness.mjs";
+import { join } from "node:path";
 
 // The installed backends this plugin mounts onto. The default is the backend the
 // running host actually loads, resolved through Node rather than named by path.
@@ -108,8 +109,8 @@ check(corpus.length >= 3, "corpus has real sessions to read", "found " + corpus.
 
 for (const candidate of corpus) {
   const staged = await stage(candidate.id);
-  const pristine = makeBackend(STAGE + "\\sessions");
-  const patched = makePatchedBackend(STAGE + "\\sessions");
+  const pristine = await makeBackend(join(STAGE, "sessions"));
+  const patched = await makePatchedBackend(join(STAGE, "sessions"));
   check(patched.state.real === patched.backend, "the plugin patched the backend instance itself (" + candidate.id.slice(0, 12) + ")");
   check(Object.hasOwn(patched.backend, "readStoredLog"), "readStoredLog is an own property while installed");
   check(Object.hasOwn(patched.backend, "decodeStoredLog"), "decodeStoredLog is an own property while installed");
@@ -169,7 +170,7 @@ let staged;
 let totalEvents = 0;
 for (const candidate of corpus) {
   const attempt = await stage(candidate.id);
-  const probe = makeBackend(STAGE + "\\sessions");
+  const probe = await makeBackend(join(STAGE, "sessions"));
   try {
     const probeLog = await probe.backend.readStoredLog(attempt.path, candidate.id, undefined);
     totalEvents = probeLog.events.length;
@@ -205,8 +206,8 @@ if (cut === undefined) {
 const cutFrames = cut.cut;
 const prefixBytes = cut.bytes;
 
-const pristinePrefix = makeBackend(STAGE + "\\sessions");
-const patchedPrefix = makePatchedBackend(STAGE + "\\sessions");
+const pristinePrefix = await makeBackend(join(STAGE, "sessions"));
+const patchedPrefix = await makePatchedBackend(join(STAGE, "sessions"));
 await writeFile(staged.path, prefixBytes);
 const expectedPrefix = await pristinePrefix.backend.readStoredLog(staged.path, big.id, undefined);
 const actualPrefix = await patchedPrefix.backend.readStoredLog(staged.path, big.id, undefined);
@@ -226,7 +227,7 @@ const actualFull = await patchedPrefix.backend.readStoredLog(staged.path, big.id
 const statsAfter = patchedPrefix.cache.stats;
 // The pristine comparison is taken on the same file state the patched backend
 // just read, so the stat-derived revisions are comparable.
-const pristineFull = makeBackend(STAGE + "\\sessions");
+const pristineFull = await makeBackend(join(STAGE, "sessions"));
 const expectedFull = await pristineFull.backend.readStoredLog(staged.path, big.id, undefined);
 
 check(actualFull.events.length === expectedAfterAppend, "the grown read has every event", actualFull.events.length + " == " + expectedAfterAppend);
@@ -257,8 +258,8 @@ section("3. fault injection: a torn tail must fall back and still be right");
 /* ------------------------------------------------------------------ */
 
 const tornBytes = Buffer.concat([prefixBytes, full.subarray(frames[cutFrames].start, frames[cutFrames].start + 9)]);
-const pristineTorn = makeBackend(STAGE + "\\sessions");
-const patchedTorn = makePatchedBackend(STAGE + "\\sessions");
+const pristineTorn = await makeBackend(join(STAGE, "sessions"));
+const patchedTorn = await makePatchedBackend(join(STAGE, "sessions"));
 // Build residency on the prefix, then drop a torn frame on top of it.
 await writeFile(staged.path, prefixBytes);
 await patchedTorn.backend.readStoredLog(staged.path, big.id, undefined);
@@ -346,7 +347,7 @@ let smallStaged;
 for (const candidate of [...candidates].reverse()) {
   if (candidate.bytes < 800 * 1024 || candidate.bytes > 12 * 1024 * 1024) continue;
   const attempt = await stage(candidate.id);
-  const probe = makeBackend(STAGE + "\\sessions");
+  const probe = await makeBackend(join(STAGE, "sessions"));
   try {
     const probeLog = await probe.backend.readStoredLog(attempt.path, candidate.id, undefined);
     if (probeLog.events.length > 200) {
@@ -367,8 +368,8 @@ const smallFull = await readFile(smallStaged.path);
 const smallFrames = scanZstdFrames(smallFull).frames;
 check(smallFrames.length > 2, "the small fixture has frames", String(smallFrames.length));
 
-const pristineSwap = makeBackend(STAGE + "\\sessions");
-const patchedSwap = makePatchedBackend(STAGE + "\\sessions");
+const pristineSwap = await makeBackend(join(STAGE, "sessions"));
+const patchedSwap = await makePatchedBackend(join(STAGE, "sessions"));
 await writeFile(smallStaged.path, smallFull);
 const firstSwap = await patchedSwap.backend.readStoredLog(smallStaged.path, small.id, undefined);
 const firstSwapEvents = firstSwap.events.length;
@@ -416,10 +417,10 @@ section("5. restore: the instance goes back to pristine");
 
 // The unpatched instance is built first and patched afterwards, so a clean
 // restore means it ends up holding no own property at all.
-const restoreTarget = makeBackend(STAGE + "\\sessions");
+const restoreTarget = await makeBackend(join(STAGE, "sessions"));
 const ownBefore = JSON.stringify(Object.keys(restoreTarget.backend).sort());
 await writeFile(smallStaged.path, smallFull);
-const restorable = makePatchedBackend(STAGE + "\\sessions", {}, restoreTarget.backend);
+const restorable = await makePatchedBackend(join(STAGE, "sessions"), {}, restoreTarget.backend);
 const beforeRestore = await restorable.backend.readStoredLog(smallStaged.path, small.id, undefined);
 check(Object.hasOwn(restorable.backend, "readStoredLog"), "installed before restore");
 restorable.disposer();
@@ -439,8 +440,8 @@ release(beforeRestore, afterRestore);
 section("6. control: with residency switched off the counters show it");
 /* ------------------------------------------------------------------ */
 
-const offBackend = makePatchedBackend(STAGE + "\\sessions", { maxResidentBytes: 1 });
-const offExpected = makeBackend(STAGE + "\\sessions");
+const offBackend = await makePatchedBackend(join(STAGE, "sessions"), { maxResidentBytes: 1 });
+const offExpected = await makeBackend(join(STAGE, "sessions"));
 const offActual = await offBackend.backend.readStoredLog(smallStaged.path, small.id, undefined);
 const offExpectedValue = await offExpected.backend.readStoredLog(smallStaged.path, small.id, undefined);
 check(compareLogs(offExpectedValue, offActual).length === 0, "a residency-free patched backend still answers correctly", compareLogs(offExpectedValue, offActual).join("; "));
@@ -456,12 +457,12 @@ release(offActual, offExpectedValue);
 section("7. the comparison can fail: inject a stale answer");
 /* ------------------------------------------------------------------ */
 
-const sabotage = makePatchedBackend(STAGE + "\\sessions");
+const sabotage = await makePatchedBackend(join(STAGE, "sessions"));
 const stale = await sabotage.backend.readStoredLog(smallStaged.path, small.id, undefined);
 const staleAnswer = stale;
 const staleEvents = stale.events.length;
 const shortBytes = smallFull.subarray(0, smallFrames[Math.max(1, smallFrames.length - 2)].start);
-const pristineShort = makeBackend(STAGE + "\\sessions");
+const pristineShort = await makeBackend(join(STAGE, "sessions"));
 await writeFile(smallStaged.path, shortBytes);
 const shortTruth = await pristineShort.backend.readStoredLog(smallStaged.path, small.id, undefined);
 check(shortTruth.events.length !== staleEvents, "the stale answer really is wrong", shortTruth.events.length + " != " + staleEvents);
@@ -524,7 +525,7 @@ async function evictionScenario(inject) {
   const cut = await prefixEndingAtClosedTurn(attempt.path);
   if (cut === undefined) return undefined;
   await writeFile(attempt.path, cut.bytes);
-  const patched = makePatchedBackend(STAGE + "\\\\sessions", { maxEntries: 2 });
+  const patched = await makePatchedBackend(join(STAGE, "sessions"), { maxEntries: 2 });
   const real = patched.cache.noteWrite;
   if (inject) patched.cache.noteWrite = () => {};
   const writer = await patched.backend.open(evictActive.id, "write");
@@ -581,12 +582,12 @@ section("9. the compatibility contract holds on the installed backend");
 {
   const { applyToService, HOOKS } = await import("../../lib/index.js");
   const HOOK_COUNT = HOOKS.length;
-  const { ctx, backend } = makeBackend(STAGE + "\\sessions");
+  const { ctx, backend } = await makeBackend(join(STAGE, "sessions"));
 
   // The installed backend must satisfy the declared surface: five patch points plus
   // the three helpers the replacements call.
   {
-    const { state, disposer } = makePatchedBackend(STAGE + "\\sessions", {}, backend);
+    const { state, disposer } = await makePatchedBackend(join(STAGE, "sessions"), {}, backend);
     check(state?.installed?.length === HOOK_COUNT, "the installed backend installs every hook", String(state?.installed?.length));
     check(Object.keys(state?.failures ?? {}).length === 0, "the installed backend meets the declared contract",
       JSON.stringify(state?.failures));
@@ -618,7 +619,7 @@ section("9. the compatibility contract holds on the installed backend");
   // And the same instance must install once the helper is back, so the refusal above
   // was caused by the removal and not by a second attach being impossible.
   {
-    const { state, disposer } = makePatchedBackend(STAGE + "\\sessions", {}, backend);
+    const { state, disposer } = await makePatchedBackend(join(STAGE, "sessions"), {}, backend);
     check(state?.installed?.length === HOOK_COUNT, "the instance installs once the helper is restored", JSON.stringify(state?.failures));
     disposer();
   }
@@ -763,7 +764,7 @@ section("11. history enumeration: the header cache hits, and cannot go stale");
 /* ------------------------------------------------------------------ */
 
 {
-  const { backend, disposer } = makePatchedBackend(STAGE + "\\sessions", {});
+  const { backend, disposer } = await makePatchedBackend(join(STAGE, "sessions"), {});
   const ownership = backend[Symbol.for("dsh.coldread-cache.ownership")];
   const headers = ownership?.headers;
   check(headers !== undefined, "the header cache is exposed for inspection");

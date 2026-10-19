@@ -334,18 +334,39 @@ pnpm run probe:contract  # 契约本身能变红：摘掉一个 helper 必须被
 
 `compat` 会自己在标准位置找树（也可以用 `DSH_TREES` 指定），对每棵树：建一份**用那棵树自己写的**
 会话日志，挂上插件，真追加一个批次，再真读回来，断言这次读是**扩展常驻解析**而不是重新冷读。
-本机 3 棵树、2 个版本（`0.2.0-rc.2` 与 `0.2.1-alpha.2`）全部 `COMPAT_GREEN checks=16`。
+
+### 后端有两种形态，两种都支持
+
+`dsh-session-persistence-jsonl` 从 `0.2.1-rc.1` 起不再导出 `JsonlSessionPersistence` 类：
+
+| 版本 | 导出 | 怎么建后端 |
+| --- | --- | --- |
+| ≤ `0.2.1-alpha.5` | `{ JsonlCompressionSchema, default }` | `new JsonlSessionPersistence(ctx, config)` |
+| ≥ `0.2.1-rc.1` | `{ Config, JsonlCompressionSchema, apply, name }` | `ctx.plugin(module, config)`，再从服务的 `Symbol.for("cordis.original")` 取回实例 |
+
+装上后端之后，**五个 patch 点（插件要替换的方法）在两种形态下都只存在于活实例上**。
+测试里因此有一个 `mountBackend()` 帮助函数按形态二选一；直接写
+`new JsonlSessionPersistence(...)` 会在 rc.1+ 上抛
+`Cannot read properties of undefined (reading 'prototype')`。
+
+已实测的版本与结果：
+
+```
+版本                 后端形态        compat
+0.2.0-rc.2          类导出          COMPAT_GREEN checks=16 failures=0
+0.2.1-alpha.2       类导出          COMPAT_GREEN checks=16 failures=0
+0.2.1-rc.1          仅 apply        COMPAT_GREEN checks=16 failures=0
+0.2.1-rc.2          仅 apply        COMPAT_GREEN checks=16 failures=0
+```
+
+在 `0.2.1-rc.2` 上另跑过完整 gate：`GATE_GREEN checks=121 failures=0`。
+用一份真实的 9.2 MB / 12,369 事件会话说，追加后读取从原生 **293.9 ms** 降到 **8.5 ms**
+（**34.4×**），事件数一致。注意 `DSH_PRISTINE_SHA` 是按版本钉住的后端包哈希，
+换版本时要用新树的哈希覆盖，否则 section 0 会报「后端被篡改」——那是守卫在正常工作。
 
 测试还用一个 loader hook 把插件**自己的** `@deepseek-ai` import 也重定向到被测的那棵树上。
 没有这一步，测的其实是「A 树的后端 + B 树的校验模块」——两棵树一样时看不出来，
 而那种情况恰恰最不容易被发现。
-
-```
-COMPAT_ALL_GREEN trees=3 failed=0
-  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.0-rc.2
-  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.1-alpha.2 (nightly)
-  exit=0  COMPAT_GREEN checks=16 failures=0   0.2.1-alpha.2 (stable)
-```
 
 ### 顺带发现的两件事
 

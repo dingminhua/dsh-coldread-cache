@@ -12,6 +12,7 @@ import * as cordis from "@deepseek-ai/cordis";
 // Resolve the backend through Node's own resolver, so the probe works in any
 // tree that has the package installed instead of naming one machine's path.
 import { createRequire } from "node:module";
+import { join } from "node:path";
 const require = createRequire(import.meta.url);
 let VENDOR;
 try {
@@ -20,14 +21,27 @@ try {
   VENDOR = process.env.DSH_VENDOR ?? "";
 }
 const pkg = process.argv[2] ?? VENDOR;
-const root = process.argv[3] ?? (process.env.DSH_HOME ? process.env.DSH_HOME + "\\sessions" : "");
+const root = process.argv[3] ?? (process.env.DSH_HOME ? join(process.env.DSH_HOME, "sessions") : "");
 if (root === "") { console.log("PROBE_FAIL set DSH_HOME (or pass the session root)"); process.exit(2); }
 const ctx = new cordis.Context();
 ctx.logger = { info() {}, warn() {}, error() {}, debug() {} };
-const P = (await import(pathToFileURL(pkg).href)).default;
-const inst = new P(ctx, { root });
+const mod = await import(pathToFileURL(pkg).href);
+const P = mod.default ?? mod.JsonlSessionPersistence;
+// From 0.2.1-rc.1 the package exports no class: it exposes `apply` and builds its
+// backend inside it, so instantiating directly fails with "P is not a constructor".
+// Mount through apply() and take the instance off the service's cordis.original,
+// which is the same instance this probe wants to write own properties onto.
+if (P === undefined) {
+  if (typeof mod.apply !== "function") { console.log("PROBE_FAIL this tree exports neither a backend class nor apply"); process.exit(2); }
+  await ctx.plugin(mod, { root });
+} else {
+  new P(ctx, { root }); // eslint-disable-line no-new -- the side effect is the registration
+}
+const inst = ctx.get("sessionPersistence")?.[Symbol.for("cordis.original")];
+if (inst === undefined) { console.log("PROBE_FAIL no patchable backend instance on this context"); process.exit(2); }
 
-console.log("P.provide =", JSON.stringify(P.provide));
+// P is undefined on rc.1+ (no class export), so report whichever shape is present.
+console.log("P.provide =", P === undefined ? "(no class; mounted via apply)" : JSON.stringify(P.provide));
 console.log("inst.name =", JSON.stringify(inst.name));
 console.log("tracker on inst =", JSON.stringify(inst[Symbol.for("cordis.tracker")]));
 console.log("reflect props =", JSON.stringify(Object.keys(ctx.reflect.props ?? {})));

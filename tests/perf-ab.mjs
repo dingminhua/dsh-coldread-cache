@@ -17,6 +17,7 @@ import {
   cleanStage, listSessions, makeBackend, makePatchedBackend, nextClosedTurn, prefixEndingAtClosedTurn,
   release, STAGE, stage, unlockStage,
 } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 const ROUNDS = Number(process.env.PERF_ROUNDS ?? 5);
 const TARGET_BYTES = Number(process.env.PERF_TARGET_BYTES ?? 50 * 1024 * 1024);
@@ -33,7 +34,7 @@ let chosen;
 for (const candidate of await listSessions()) {
   if (candidate.bytes < TARGET_BYTES * 0.6 || candidate.bytes > TARGET_BYTES * 2.2) continue;
   const attempt = await stage(candidate.id);
-  const probe = makeBackend(STAGE + "\\sessions");
+  const probe = await makeBackend(join(STAGE, "sessions"));
   try {
     const log = await probe.backend.readStoredLog(attempt.path, candidate.id, undefined);
     if (log.events.length > 500) {
@@ -95,7 +96,7 @@ async function rounds(backend, label, path, id) {
 
 /* ---- patched: residency extends the resident parse ---------------------- */
 const patchedPath = chosen.path;
-const patched = makePatchedBackend(STAGE + "\\sessions");
+const patched = await makePatchedBackend(join(STAGE, "sessions"));
 if (!(await closedTurnPrefix(patchedPath, patched.backend, chosen.candidate.id))) {
   say("PERF_RED no frame-aligned prefix ends at a closed turn");
   process.exit(1);
@@ -105,16 +106,16 @@ say("PATCHED_STATS " + JSON.stringify(patched.cache.stats));
 patched.disposer();
 
 /* ---- control: identical loop, residency switched off -------------------- */
-const controlStaged = await stage(chosen.candidate.id, STAGE + "\\control");
-const control = makePatchedBackend(STAGE + "\\control\\sessions", { maxResidentBytes: 1 });
+const controlStaged = await stage(chosen.candidate.id, join(STAGE, "control"));
+const control = await makePatchedBackend(join(STAGE, "control", "sessions"), { maxResidentBytes: 1 });
 await closedTurnPrefix(controlStaged.path, control.backend, chosen.candidate.id);
 const controlTimes = await rounds(control.backend, "control", controlStaged.path, chosen.candidate.id);
 say("CONTROL_STATS " + JSON.stringify(control.cache.stats));
 control.disposer();
 
 /* ---- pristine: the unpatched class the running host uses ---------------- */
-const pristineStaged = await stage(chosen.candidate.id, STAGE + "\\pristine");
-const pristine = makeBackend(STAGE + "\\pristine\\sessions");
+const pristineStaged = await stage(chosen.candidate.id, join(STAGE, "pristine"));
+const pristine = await makeBackend(join(STAGE, "pristine", "sessions"));
 await closedTurnPrefix(pristineStaged.path, pristine.backend, chosen.candidate.id);
 const pristineTimes = await rounds(pristine.backend, "pristine", pristineStaged.path, chosen.candidate.id);
 

@@ -16,6 +16,7 @@ import {
   cleanStage, compareLogs, listSessions, makeBackend, makePatchedBackend, nextClosedTurn,
   prefixEndingAtClosedTurn, release, stage, STAGE, unlockStage,
 } from "./gate/harness.mjs";
+import { join } from "node:path";
 
 await cleanStage();
 const ROUNDS = Number(process.env.TORN_ROUNDS ?? 12);
@@ -33,7 +34,7 @@ let big;
 let staged;
 for (const candidate of corpus) {
   const attempt = await stage(candidate.id);
-  const probe = makeBackend(STAGE + "\\sessions");
+  const probe = await makeBackend(join(STAGE, "sessions"));
   try {
     await probe.backend.readStoredLog(attempt.path, candidate.id, undefined);
     big = candidate;
@@ -49,7 +50,7 @@ check(cut !== undefined, "found a frame-aligned prefix ending at a closed turn")
 
 // Nine bytes of the next frame: enough to start a frame, not enough to finish one.
 const tornBytes = Buffer.concat([cut.bytes, full.subarray(frames[cut.cut].start, frames[cut.cut].start + 9)]);
-const root = STAGE + "\\sessions";
+const root = join(STAGE, "sessions");
 console.log("");
 console.log("  fixture " + big.id + "  prefix " + cut.bytes.length + " B  torn " + tornBytes.length + " B");
 console.log("");
@@ -62,8 +63,8 @@ const shape = (log) => ({
 });
 
 for (let round = 1; round <= ROUNDS; round += 1) {
-  const pristine = makeBackend(root);
-  const patched = makePatchedBackend(root, {});
+  const pristine = await makeBackend(root);
+  const patched = await makePatchedBackend(root, {});
   await writeFile(staged.path, cut.bytes);
   await patched.backend.readStoredLog(staged.path, big.id, undefined);
   // The gate appends a real turn here (its section 2) before the torn write. That is the one
@@ -97,7 +98,7 @@ for (let round = 1; round <= ROUNDS; round += 1) {
     // Repeatability: read the SAME fixed damaged file again with a fresh instance and require
     // the plugin to give the same answer. If it does not, the answer depends on something other
     // than the input, and a rare gate failure could come from the plugin rather than the fixture.
-    const repeatBackend = makePatchedBackend(root, {});
+    const repeatBackend = await makePatchedBackend(root, {});
     await repeatBackend.backend.readStoredLog(staged.path, big.id, undefined);
     const repeated = await repeatBackend.backend.readStoredLog(staged.path, big.id, undefined);
     const repeatDiffs = compareLogs(actual, repeated, { revision: false });

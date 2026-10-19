@@ -15,12 +15,29 @@ import * as jsonlModule from "@deepseek-ai/dsh-session-persistence-jsonl";
 
 const Cordis = cordis.default ?? cordis;
 const JsonlSessionPersistence = jsonlModule.default ?? jsonlModule.JsonlSessionPersistence;
+// From 0.2.1-rc.1 the jsonl package exports only `{ Config, JsonlCompressionSchema,
+// apply, name }` and builds its backend inside `apply`, so there is no class to
+// instantiate. The gate therefore builds every backend through a factory that picks
+// the shape this tree actually offers; `new JsonlSessionPersistence(...)` below would
+// throw "JsonlSessionPersistence is not a constructor" on rc.1+.
+const mountsViaApply = typeof jsonlModule.apply === "function" && JsonlSessionPersistence === undefined;
 import { applyToService } from "../../lib/index.js";
+
+/** Build one backend on `ctx` in whichever shape this tree exposes. */
+async function buildBackend(ctx, root) {
+  const config = { root, compression: "zstd" };
+  if (!mountsViaApply) return new JsonlSessionPersistence(ctx, config);
+  await ctx.plugin(jsonlModule, config);
+  const service = ctx.get("sessionPersistence");
+  const real = service?.[Symbol.for("cordis.original")];
+  if (real === undefined) throw new Error("gate: this tree mounted no patchable backend");
+  return real;
+}
 
 // Where the real sessions live. DSH_HOME is what the host itself uses, so the
 // default follows it rather than naming one machine's disk. Missing it is an
 // error, not a reason to guess.
-export const SESSIONS = process.env.DSH_SESSIONS ?? (process.env.DSH_HOME ? process.env.DSH_HOME + "\\sessions" : "");
+export const SESSIONS = process.env.DSH_SESSIONS ?? (process.env.DSH_HOME ? join(process.env.DSH_HOME, "sessions") : "");
 // The stage root is overridable so two test processes can never share fixtures:
 // each one writes and truncates artifacts, and a shared root makes one run
 // corrupt the other's sessions (measured: the gate saw a live host's append).
@@ -31,7 +48,7 @@ export const SESSIONS = process.env.DSH_SESSIONS ?? (process.env.DSH_HOME ? proc
 const ENTRY = process.argv[1] ?? "";
 const ROLE = /perf-ab\.mjs$/.test(ENTRY) ? "perf" : "gate";
 export const STAGE = process.env.GATE_STAGE ?? join(process.cwd(), ROLE === "perf" ? ".stage-perf" : ".stage");
-export const ORIGIN = STAGE + "\\origin";
+export const ORIGIN = join(STAGE, "origin");
 
 let failures = 0;
 let checks = 0;
@@ -70,9 +87,9 @@ export function makeContext() {
 }
 
 /** One pristine backend instance over a root. */
-export function makeBackend(root) {
+export async function makeBackend(root) {
   const { ctx, lines } = makeContext();
-  const backend = new JsonlSessionPersistence(ctx, { root, compression: "zstd" });
+  const backend = await buildBackend(ctx, root);
   return { ctx, backend, lines };
 }
 
@@ -82,9 +99,9 @@ export function makeBackend(root) {
  * `existing` lets a caller patch an instance it already holds, which is how the
  * restore check proves that unmounting leaves the instance exactly as it was.
  */
-export function makePatchedBackend(root, config = {}, existing) {
+export async function makePatchedBackend(root, config = {}, existing) {
   const { ctx, lines } = makeContext();
-  const backend = existing ?? new JsonlSessionPersistence(ctx, { root, compression: "zstd" });
+  const backend = existing ?? await buildBackend(ctx, root);
   const service = { [Symbol.for("cordis.original")]: backend };
   const disposer = applyToService(ctx, service, config);
   if (disposer === undefined) throw new Error("harness: the plugin did not attach");

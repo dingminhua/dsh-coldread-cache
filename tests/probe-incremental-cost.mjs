@@ -14,7 +14,7 @@ import { createZstdFrameDecoder, parseHeaderRecord, scanZstdFrames } from "../li
 
 // DSH_HOME is what the host itself uses. If it is missing there is nothing
 // sensible to guess, so say so instead of silently reading the wrong disk.
-const ROOT = process.env.DSH_SESSIONS ?? (process.env.DSH_HOME ? process.env.DSH_HOME + "\\\\sessions" : "");
+const ROOT = process.env.DSH_SESSIONS ?? (process.env.DSH_HOME ? join(process.env.DSH_HOME, "sessions") : "");
 if (ROOT === "") {
   console.log("PROBE_FAIL set DSH_HOME (or DSH_SESSIONS) to the session root");
   process.exit(2);
