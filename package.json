@@ -5,6 +5,12 @@
   "type": "module",
   "license": "MIT",
   "author": "dingminhua",
+  "contributors": [
+    {
+      "name": "iuuuuuuuu",
+      "url": "https://github.com/iuuuuuuuu"
+    }
+  ],
   "copyright": "Copyright (c) 2026 LaoDing",
   "main": "lib/index.js",
   "exports": {

@@ -6,9 +6,13 @@
 **[dsh-coldread-cache](https://github.com/iuuuuuuuu/dsh-coldread-cache)**,
 Copyright (c) 2026 **iuuuuuuuu**, licensed under the MIT License.
 
-The original MIT license text is preserved verbatim in `LICENSE` and must not be
-modified. The upstream copyright notice is a condition of the MIT License and
-applies to all code inherited from that project.
+The original MIT license text is preserved in `LICENSE`. That file now carries two
+copyright lines: the upstream author's (iuuuuuuuu, listed first) and this fork's
+maintainer's (LaoDing). The upstream copyright notice is a condition of the MIT
+License and applies to all code inherited from that project.
+
+`package.json` lists `dingminhua` as `author` (npm allows exactly one) and
+`iuuuuuuuu` as a `contributor`.
 
 ## What this fork changes
 
