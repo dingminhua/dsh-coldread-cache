@@ -84,13 +84,13 @@ Cannot add property 15953, object is not extensible
 // <profile>/cordis.patch.yml
 - insert:
     - id: coldread-cache
-      name: 'dsh-coldread-cache'
+      name: '@dmh2002/dsh-coldread-cache'
 ```
 
 推荐用 dsh 自带的插件命令装：
 
 ```sh
-dsh plugin --profile <name> add dsh-coldread-cache
+dsh plugin --profile <name> add @dmh2002/dsh-coldread-cache
 ```
 
 手工挂载需要同时改三处，缺一处启动就会失败：
@@ -98,7 +98,7 @@ dsh plugin --profile <name> add dsh-coldread-cache
 | 文件 | 需要什么 |
 | --- | --- |
 | `<profile>/package.json` | `dependencies` 里有本包 |
-| `<profile>/package.json` | `dsh.profile.bundles` 里有 `dsh-coldread-cache` |
+| `<profile>/package.json` | `dsh.profile.bundles` 里有 `@dmh2002/dsh-coldread-cache` |
 | `<profile>/cordis.patch.yml` | 上面那条 `insert` 行 |
 
 挂载顺序不用管：插件先试 `ctx.get("sessionPersistence")`，服务还没起来就注册

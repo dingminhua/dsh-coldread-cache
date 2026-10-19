@@ -101,13 +101,13 @@ The plugin is loaded from a profile, and it bundles its own loader row:
 // <profile>/cordis.patch.yml
 - insert:
     - id: coldread-cache
-      name: 'dsh-coldread-cache'
+      name: '@dmh2002/dsh-coldread-cache'
 ```
 
 The recommended way is dsh's own plugin command:
 
 ```sh
-dsh plugin --profile <name> add dsh-coldread-cache
+dsh plugin --profile <name> add @dmh2002/dsh-coldread-cache
 ```
 
 Mounting it by hand needs all three of these; missing one fails startup:
@@ -115,7 +115,7 @@ Mounting it by hand needs all three of these; missing one fails startup:
 | file | what it needs |
 | --- | --- |
 | `<profile>/package.json` | the package in `dependencies` |
-| `<profile>/package.json` | `dsh-coldread-cache` in `dsh.profile.bundles` |
+| `<profile>/package.json` | `@dmh2002/dsh-coldread-cache` in `dsh.profile.bundles` |
 | `<profile>/cordis.patch.yml` | the `insert` row above |
 
 Mount order does not matter: the plugin first tries
