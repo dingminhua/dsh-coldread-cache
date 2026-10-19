@@ -1,4 +1,4 @@
-# dsh-coldread-cache bundle patch
+# @dmh2002/dsh-coldread-cache bundle patch
 #
 # 安装（推荐）：
 #   dsh plugin --profile <name> add <path-or-git>
@@ -7,4 +7,4 @@
 # 行 id `coldread-cache` 同时是设置命名空间。
 - insert:
     - id: coldread-cache
-      name: 'dsh-coldread-cache'
+      name: '@dmh2002/dsh-coldread-cache'
