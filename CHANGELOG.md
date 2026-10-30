@@ -65,3 +65,24 @@ On `0.2.1-rc.2` additionally: `GATE_GREEN checks=121`, `FAULT_GREEN checks=7`,
 The gate suite pins the backend package hash via `DSH_PRISTINE_SHA`; it must be
 overridden when switching trees, otherwise section 0 reports a tampered vendored
 module. That is the guard working, not a regression.
+
+### Re-verified on 0.2.1-rc.5 (2026-10-30)
+
+The host moved from `0.2.1-rc.1` to `0.2.1-rc.5`. Across that span the whole
+`packages/session/` tree changed **only** in `package.json` version numbers — no
+source edits to the backend, the format packages, or the read path.
+
+Re-ran the suites against `0.2.1-rc.5` anyway, because "the diff only touched
+version strings" is not the same as "the published artifact still mounts":
+
+- `COMPAT_GREEN checks=16 failures=0` (all six hooks installed, append served by
+  extending the resident parse, zero cold parses)
+- `GATE_GREEN checks=121 failures=0`
+- `FAULT_GREEN checks=7 failures=0`
+- `PERF_GREEN checks=4 failures=0` — read-after-append **787.8 ms → 41.3 ms**
+- `npm test` exit 0
+
+No code changes were needed. The absolute timings on this run are higher than the
+`rc.2` figures above because the corpus picked a larger staged artifact (13,904
+events vs 12,369); the ratio is what the assertion checks.
+

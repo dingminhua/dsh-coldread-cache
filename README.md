@@ -357,6 +357,7 @@ pnpm run probe:contract  # 契约本身能变红：摘掉一个 helper 必须被
 0.2.1-alpha.2       类导出          COMPAT_GREEN checks=16 failures=0
 0.2.1-rc.1          仅 apply        COMPAT_GREEN checks=16 failures=0
 0.2.1-rc.2          仅 apply        COMPAT_GREEN checks=16 failures=0
+0.2.1-rc.5          仅 apply        COMPAT_GREEN checks=16 failures=0
 ```
 
 在 `0.2.1-rc.2` 上另跑过完整 gate：`GATE_GREEN checks=121 failures=0`。

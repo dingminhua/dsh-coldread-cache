@@ -420,6 +420,7 @@ version              backend shape   compat
 0.2.1-alpha.2       class export    COMPAT_GREEN checks=16 failures=0
 0.2.1-rc.1          apply only      COMPAT_GREEN checks=16 failures=0
 0.2.1-rc.2          apply only      COMPAT_GREEN checks=16 failures=0
+0.2.1-rc.5          apply only      COMPAT_GREEN checks=16 failures=0
 ```
 
 On `0.2.1-rc.2` the full gate also ran green: `GATE_GREEN checks=121 failures=0`. On a real
